@@ -24,6 +24,7 @@ Thumbs.db
 data/
 datasets/
 outputs/
+results/
 checkpoints/
 wandb/
 logs/

@@ -3,6 +3,7 @@ torchvision
 numpy
 pandas
 scikit-learn
+matplotlib
 opencv-python
 Pillow
 tqdm
