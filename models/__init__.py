@@ -8,12 +8,14 @@ from torch import nn
 
 from .mini_xception import MiniXception, get_model as get_mini_xception
 from .efficientnet import EfficientNetB0
+from .resnet import ResNet18
 
 from config import MODEL_CONFIGS
 
 __all__ = [
     "MiniXception",
     "EfficientNetB0",
+    "ResNet18",
     "get_model",
     "get_model_config",
     "load_model_from_checkpoint",
@@ -28,6 +30,9 @@ _MODEL_NAME_MAP = {
     "efficientnet_b0": "efficientnet_b0",
     "efficientnet-b0": "efficientnet_b0",
     "efficientnet": "efficientnet_b0",
+    "resnet18": "resnet18",
+    "resnet-18": "resnet18",
+    "resnet": "resnet18",
 }
 
 
@@ -55,6 +60,14 @@ def get_model(model_name: str, num_classes: int, **kwargs) -> nn.Module:
 
     elif name in {"efficientnet_b0", "efficientnet-b0", "efficientnet"}:
         return EfficientNetB0(
+            num_classes=num_classes,
+            in_channels=kwargs.get("in_channels", 3),
+            freeze_backbone=kwargs.get("freeze_backbone", False),
+            unfreeze_last_n=kwargs.get("unfreeze_last_n", 2),
+        )
+
+    elif name in {"resnet18", "resnet-18", "resnet"}:
+        return ResNet18(
             num_classes=num_classes,
             in_channels=kwargs.get("in_channels", 3),
             freeze_backbone=kwargs.get("freeze_backbone", False),
@@ -90,13 +103,40 @@ def get_model_config(model_name: str) -> dict:
     return MODEL_CONFIGS[config_key]
 
 
+def _infer_num_classes(state_dict: dict, model_name: str) -> int:
+    """Infer the number of output classes from a raw state dict."""
+    name = model_name.lower()
+    if name in {"efficientnet_b0", "efficientnet-b0", "efficientnet"}:
+        key = "backbone.classifier.4.weight"
+    elif name in {"mini_xception", "mn_xception",
+                  "mini-xception", "mn-xception"}:
+        key = "fc.weight"
+    elif name in {"resnet18", "resnet-18", "resnet"}:
+        key = "backbone.fc.4.weight"
+    else:
+        raise ValueError(
+            f"Cannot infer num_classes for model: {model_name}"
+        )
+    if key not in state_dict:
+        raise KeyError(
+            f"Expected key '{key}' not found in state dict"
+        )
+    return state_dict[key].shape[0]
+
+
 def load_model_from_checkpoint(
     model_name: str,
     checkpoint_path: str | Path,
     device: torch.device | None = None,
+    class_names: Tuple[str, ...] | None = None,
 ) -> Tuple[nn.Module, Tuple[str, ...]]:
     """
     Load a trained model from a checkpoint file.
+
+    Supports two checkpoint formats:
+        1. Wrapped dict with 'model_state' and 'classes' keys
+           (produced by train.py).
+        2. Raw state dict (produced by notebook training).
 
     Handles architecture-specific details such as detecting
     whether EfficientNet was trained with a channel adapter
@@ -107,6 +147,9 @@ def load_model_from_checkpoint(
             efficientnet_b0).
         checkpoint_path: Path to the .pth or .pt checkpoint.
         device: Target device (default: auto-detect).
+        class_names: Optional class names override. Required
+            when loading a raw state dict checkpoint that does
+            not contain class information.
 
     Returns:
         Tuple of (model in eval mode, class_names tuple).
@@ -117,16 +160,30 @@ def load_model_from_checkpoint(
         )
 
     checkpoint = torch.load(
-        checkpoint_path, map_location=device
+        checkpoint_path, map_location=device, weights_only=False
     )
-    state_dict = checkpoint["model_state"]
-    class_names = tuple(checkpoint["classes"])
 
-    # Auto-detect in_channels for EfficientNet by checking
-    # whether the checkpoint contains channel_adapter weights
+    # Detect checkpoint format
+    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+        # Wrapped format from train.py
+        state_dict = checkpoint["model_state"]
+        if class_names is None:
+            class_names = tuple(checkpoint["classes"])
+    else:
+        # Raw state dict (e.g. from notebook training)
+        state_dict = checkpoint
+        if class_names is None:
+            num_classes = _infer_num_classes(state_dict, model_name)
+            class_names = tuple(
+                f"class_{i}" for i in range(num_classes)
+            )
+
+    # Auto-detect in_channels for transfer learning models by
+    # checking whether the checkpoint contains channel_adapter weights
     kwargs = {}
     name = model_name.lower()
-    if name in {"efficientnet_b0", "efficientnet-b0", "efficientnet"}:
+    if name in {"efficientnet_b0", "efficientnet-b0", "efficientnet",
+                "resnet18", "resnet-18", "resnet"}:
         has_adapter = any(
             k.startswith("channel_adapter")
             for k in state_dict

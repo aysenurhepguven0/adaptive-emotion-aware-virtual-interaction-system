@@ -14,10 +14,10 @@ inference, Grad-CAM explainability, and real-time webcam prediction.
 |-------|-----------|------------|-------------|
 | MN-Xception | ~85K | 64x64 | Lightweight custom CNN with separable convolutions |
 | EfficientNet-B0 | ~4.3M | 224x224 | ImageNet pretrained with transfer learning |
+| ResNet-18 | ~11.2M | 224x224 | ImageNet pretrained with partial backbone fine-tuning |
 
 ## Planned Models
 
-- ResNet-18
 - HSEmotion
 
 ## Project Structure
@@ -38,7 +38,8 @@ adaptive-emotion-aware-virtual-interaction-system/
 ├── models/
 │   ├── __init__.py          # Model factory and checkpoint loading
 │   ├── mini_xception.py     # MN-Xception architecture
-│   └── efficientnet.py      # EfficientNet-B0 architecture
+│   ├── efficientnet.py      # EfficientNet-B0 architecture
+│   └── resnet.py            # ResNet-18 architecture
 │
 ├── utils/
 │   ├── __init__.py
@@ -47,7 +48,8 @@ adaptive-emotion-aware-virtual-interaction-system/
 │
 └── notebooks/
     ├── train_mini_xception.ipynb
-    └── train_efficientnet_B0.ipynb
+    ├── train_efficientnet_B0.ipynb
+    └── train_resnet.ipynb
 ```
 
 ## Installation
@@ -116,7 +118,7 @@ python -m utils.grad_cam \
 Use `--target-class <index>` to visualize a specific class instead of
 the predicted one.
 
-Supported models: `mini_xception`, `efficientnet_b0`.
+Supported models: `mini_xception`, `efficientnet_b0`, `resnet18`.
 
 ### Real-Time Webcam Inference
 
