@@ -141,11 +141,31 @@ def get_target_layer(model: nn.Module, model_name: str) -> nn.Module:
         return model.conv_final
     elif name in {"efficientnet_b0", "efficientnet"}:
         return model.backbone.features[-1]
+    elif name in {"resnet18", "resnet-18", "resnet"}:
+        return model.backbone.layer4
     else:
         raise ValueError(
             f"No default Grad-CAM target layer for '{model_name}'. "
-            "Supported models: mini_xception, efficientnet_b0."
+            "Supported models: mini_xception, efficientnet_b0, "
+            "resnet18."
         )
+
+
+EMOTION_COLORS = {
+    "happy": (0, 255, 255),
+    "sad": (255, 0, 0),
+    "angry": (0, 0, 255),
+    "surprise": (255, 0, 255),
+    "suprise": (255, 0, 255),
+    "fear": (0, 165, 255),
+    "disgust": (0, 255, 0),
+    "neutral": (255, 255, 255),
+}
+
+
+def get_emotion_color(label: str) -> Tuple[int, int, int]:
+    """Resolve the BGR color for a predicted emotion label."""
+    return EMOTION_COLORS.get(label.lower(), (0, 255, 0))
 
 
 def overlay_heatmap(
@@ -153,6 +173,7 @@ def overlay_heatmap(
     heatmap: np.ndarray,
     alpha: float = 0.5,
     colormap: int = cv2.COLORMAP_JET,
+    emotion_color: Tuple[int, int, int] | None = None,
 ) -> np.ndarray:
     """
     Overlay a Grad-CAM heatmap on the original image.
@@ -172,6 +193,12 @@ def overlay_heatmap(
     )
     heatmap_uint8 = np.uint8(255 * heatmap_resized)
     heatmap_colored = cv2.applyColorMap(heatmap_uint8, colormap)
+
+    if emotion_color is not None:
+        tint = np.full_like(heatmap_colored, emotion_color)
+        heatmap_colored = cv2.addWeighted(
+            heatmap_colored, 0.6, tint, 0.4, 0
+        )
 
     blended = cv2.addWeighted(
         image, 1 - alpha, heatmap_colored, alpha, 0
@@ -252,7 +279,12 @@ def generate_grad_cam(
     image_bgr = cv2.cvtColor(
         np.array(original_image), cv2.COLOR_RGB2BGR
     )
-    overlay = overlay_heatmap(image_bgr, heatmap)
+    label_for_color = predicted_label
+    if target_class is not None:
+        label_for_color = class_names[target_class]
+    overlay = overlay_heatmap(
+        image_bgr, heatmap, emotion_color=get_emotion_color(label_for_color)
+    )
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

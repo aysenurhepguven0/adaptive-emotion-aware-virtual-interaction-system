@@ -11,7 +11,8 @@ Supports:
 Usage:
     python webcam.py \
         --model mini_xception \
-        --checkpoint results/mini_xception/best_mini_xception.pth
+        --checkpoint results/mini_xception/best_mini_xception.pth \
+        --classes "angry,happy,neutral,sad,suprise"
 
 Controls:
     q - quit the application
@@ -51,9 +52,23 @@ MIN_NEIGHBORS = 5
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE = 0.7
 FONT_THICKNESS = 2
-BOX_COLOR = (0, 255, 0)   # green bounding box
-TEXT_COLOR = (0, 255, 0)   # green label text
 FPS_COLOR = (255, 255, 0)  # cyan FPS counter
+
+EMOTION_COLORS = {
+    "happy": (0, 255, 255),
+    "sad": (255, 0, 0),
+    "angry": (0, 0, 255),
+    "surprise": (255, 0, 255),
+    "suprise": (255, 0, 255),
+    "fear": (0, 165, 255),
+    "disgust": (0, 255, 0),
+    "neutral": (255, 255, 255),
+}
+
+
+def get_emotion_color(label: str) -> Tuple[int, int, int]:
+    """Resolve the BGR color for a predicted emotion label."""
+    return EMOTION_COLORS.get(label.lower(), (0, 255, 0))
 
 
 def build_face_detector() -> cv2.CascadeClassifier:
@@ -207,13 +222,14 @@ def draw_prediction(
         confidence: Prediction confidence (0-1).
     """
     x, y, w, h = bbox
-    cv2.rectangle(frame, (x, y), (x + w, y + h), BOX_COLOR, 2)
+    color = get_emotion_color(label)
+    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
 
     text = f"{label} ({confidence:.0%})"
     text_y = y - 10 if y - 10 > 20 else y + h + 25
     cv2.putText(
         frame, text, (x, text_y),
-        FONT, FONT_SCALE, TEXT_COLOR, FONT_THICKNESS,
+        FONT, FONT_SCALE, color, FONT_THICKNESS,
     )
 
 
@@ -222,6 +238,7 @@ def run_webcam(
     checkpoint_path: Path,
     camera_index: int = 0,
     device: torch.device | None = None,
+    class_names: tuple[str, ...] | None = None,
 ) -> None:
     """
     Main webcam inference loop.
@@ -235,6 +252,7 @@ def run_webcam(
         checkpoint_path: Path to the trained model checkpoint.
         camera_index: OpenCV camera device index.
         device: Computation device (default: auto-detect).
+        class_names: Optional class label override.
     """
     if device is None:
         device = torch.device(
@@ -244,7 +262,8 @@ def run_webcam(
     # Load model and preprocessing pipeline
     print(f"Loading model: {model_name}")
     model, class_names = load_model_from_checkpoint(
-        model_name, checkpoint_path, device
+        model_name, checkpoint_path, device,
+        class_names=class_names,
     )
     print(f"Classes: {class_names}")
 
@@ -269,6 +288,8 @@ def run_webcam(
         if not ret:
             print("Error: Failed to read frame from camera.")
             break
+
+        frame = cv2.flip(frame, 1)
 
         # Detect faces in the current frame
         faces = detect_faces(face_detector, frame)
@@ -335,6 +356,13 @@ def parse_args() -> argparse.Namespace:
         "--device", default=None,
         help="Device for computation (default: auto-detect).",
     )
+    parser.add_argument(
+        "--classes", default=None,
+        help="Comma-separated class names (e.g. "
+             "'angry,happy,neutral,sad,surprise'). Required for "
+             "raw state-dict checkpoints without embedded class "
+             "info.",
+    )
     return parser.parse_args()
 
 
@@ -348,11 +376,18 @@ def main() -> None:
         else ("cuda" if torch.cuda.is_available() else "cpu")
     )
 
+    class_names = None
+    if args.classes:
+        class_names = tuple(
+            c.strip() for c in args.classes.split(",")
+        )
+
     run_webcam(
         model_name=args.model,
         checkpoint_path=Path(args.checkpoint),
         camera_index=args.camera,
         device=device,
+        class_names=class_names,
     )
 
 
