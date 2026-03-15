@@ -9,6 +9,7 @@ from torch import nn
 from .mini_xception import MiniXception, get_model as get_mini_xception
 from .efficientnet import EfficientNetB0
 from .resnet import ResNet18
+from .hsemotion_model import HSEmotion
 
 from config import MODEL_CONFIGS
 
@@ -16,6 +17,7 @@ __all__ = [
     "MiniXception",
     "EfficientNetB0",
     "ResNet18",
+    "HSEmotion",
     "get_model",
     "get_model_config",
     "load_model_from_checkpoint",
@@ -33,6 +35,9 @@ _MODEL_NAME_MAP = {
     "resnet18": "resnet18",
     "resnet-18": "resnet18",
     "resnet": "resnet18",
+    "hsemotion": "hsemotion",
+    "hs_emotion": "hsemotion",
+    "hs-emotion": "hsemotion",
 }
 
 
@@ -74,6 +79,17 @@ def get_model(model_name: str, num_classes: int, **kwargs) -> nn.Module:
             unfreeze_last_n=kwargs.get("unfreeze_last_n", 2),
         )
 
+    elif name in {"hsemotion", "hs_emotion", "hs-emotion"}:
+        return HSEmotion(
+            num_classes=num_classes,
+            in_channels=kwargs.get("in_channels", 3),
+            freeze_backbone=kwargs.get("freeze_backbone", False),
+            unfreeze_last_n=kwargs.get("unfreeze_last_n", 2),
+            affectnet_pretrained=kwargs.get(
+                "affectnet_pretrained", True
+            ),
+        )
+
     raise ValueError(f"Unknown model name: {model_name}")
 
 
@@ -113,6 +129,8 @@ def _infer_num_classes(state_dict: dict, model_name: str) -> int:
         key = "fc.weight"
     elif name in {"resnet18", "resnet-18", "resnet"}:
         key = "backbone.fc.4.weight"
+    elif name in {"hsemotion", "hs_emotion", "hs-emotion"}:
+        key = "backbone.classifier.4.weight"
     else:
         raise ValueError(
             f"Cannot infer num_classes for model: {model_name}"
@@ -183,13 +201,17 @@ def load_model_from_checkpoint(
     kwargs = {}
     name = model_name.lower()
     if name in {"efficientnet_b0", "efficientnet-b0", "efficientnet",
-                "resnet18", "resnet-18", "resnet"}:
+                "resnet18", "resnet-18", "resnet",
+                "hsemotion", "hs_emotion", "hs-emotion"}:
         has_adapter = any(
             k.startswith("channel_adapter")
             for k in state_dict
         )
         kwargs["in_channels"] = 1 if has_adapter else 3
         kwargs["freeze_backbone"] = False
+        # Skip AffectNet download when loading from checkpoint
+        if name in {"hsemotion", "hs_emotion", "hs-emotion"}:
+            kwargs["affectnet_pretrained"] = False
 
     model = get_model(
         model_name, num_classes=len(class_names), **kwargs

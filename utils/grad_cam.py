@@ -143,11 +143,13 @@ def get_target_layer(model: nn.Module, model_name: str) -> nn.Module:
         return model.backbone.features[-1]
     elif name in {"resnet18", "resnet-18", "resnet"}:
         return model.backbone.layer4
+    elif name in {"hsemotion", "hs_emotion", "hs-emotion"}:
+        return model.backbone.blocks[-1]
     else:
         raise ValueError(
             f"No default Grad-CAM target layer for '{model_name}'. "
             "Supported models: mini_xception, efficientnet_b0, "
-            "resnet18."
+            "resnet18, hsemotion."
         )
 
 
