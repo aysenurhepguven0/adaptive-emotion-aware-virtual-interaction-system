@@ -48,7 +48,8 @@ adaptive-emotion-aware-virtual-interaction-system/
     ├── train_mini_xception.ipynb
     ├── train_efficientnet_B0.ipynb
     ├── train_resnet.ipynb
-    └── train_hsemotion.ipynb
+    ├── train_hsemotion.ipynb
+    └── compare_models.ipynb    # Side-by-side model comparison
 ```
 
 ## Installation
@@ -77,6 +78,16 @@ python train.py \
 ```
 
 Or use the Colab notebooks in `notebooks/` for GPU training.
+
+### Model Comparison
+
+Compare all four trained models side by side:
+
+Open `notebooks/compare_models.ipynb` in Colab. The notebook evaluates
+all models on the same FERPlus test split and produces accuracy tables,
+per-class F1 charts, confusion matrices, training history overlays, and
+a parameter efficiency analysis. Outputs are saved to
+`results/model_comparison/`.
 
 ### Evaluation
 
