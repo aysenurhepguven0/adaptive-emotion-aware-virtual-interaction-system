@@ -5,14 +5,26 @@ Captures video from a webcam, detects faces using OpenCV's Haar
 cascade, and predicts emotions in real time using a trained model.
 
 Supports:
-    - MiniXception (64x64 input)
-    - EfficientNet-B0 (224x224 input)
+    - MiniXception
+    - EfficientNet-B0
+    - ResNet-18
+    - HSEmotion
 
-Usage:
+Datasets:
+    - ferplus : FER+ (grayscale input)
+    - raf_db  : RAF-DB (RGB input)
+
+Usage (FER+ model):
     python webcam.py \
         --model mini_xception \
         --checkpoint results/mini_xception/best_mini_xception.pth \
-        --classes "angry,happy,neutral,sad,suprise"
+        --dataset ferplus
+
+Usage (RAF-DB model):
+    python webcam.py \
+        --model mini_xception \
+        --checkpoint results/mini_xception_rafdb/best_mini_xception_rafdb.pth \
+        --dataset raf_db
 
 Controls:
     q - quit the application
@@ -21,6 +33,8 @@ Controls:
 from __future__ import annotations
 
 import argparse
+import json
+import socket
 import time
 from pathlib import Path
 from typing import List, Tuple
@@ -54,6 +68,22 @@ FONT_SCALE = 0.7
 FONT_THICKNESS = 2
 FPS_COLOR = (255, 255, 0)  # cyan FPS counter
 
+EMOTION_CLASSES = ("angry", "happy", "neutral", "sad", "surprise")
+
+# Per-dataset defaults used when --dataset is specified.
+# grayscale: whether to convert webcam frames to grayscale
+#            before inference (matches the training pipeline).
+DATASET_DEFAULTS = {
+    "ferplus": {
+        "grayscale": True,
+        "classes": ("angry", "happy", "neutral", "sad", "suprise"),
+    },
+    "raf_db": {
+        "grayscale": False,
+        "classes": ("angry", "happy", "neutral", "sad", "suprise"),
+    },
+}
+
 EMOTION_COLORS = {
     "happy": (0, 255, 255),
     "sad": (255, 0, 0),
@@ -69,6 +99,31 @@ EMOTION_COLORS = {
 def get_emotion_color(label: str) -> Tuple[int, int, int]:
     """Resolve the BGR color for a predicted emotion label."""
     return EMOTION_COLORS.get(label.lower(), (0, 255, 0))
+
+
+def send_to_touchdesigner(
+    probs: torch.Tensor,
+    class_names: Tuple[str, ...],
+    sock: socket.socket,
+    ip: str,
+    port: int,
+) -> None:
+    """
+    Send emotion probabilities to TouchDesigner via UDP as JSON.
+
+    Args:
+        probs: Softmax probability tensor matching class_names order.
+        class_names: Emotion class labels.
+        sock: UDP socket.
+        ip: TouchDesigner host IP address.
+        port: TouchDesigner UDP port.
+    """
+    emotion_dict = {
+        class_names[i]: round(float(probs[i]), 4)
+        for i in range(len(class_names))
+    }
+    payload = json.dumps(emotion_dict) + "\n"
+    sock.sendto(payload.encode("utf-8"), (ip, port))
 
 
 def build_face_detector() -> cv2.CascadeClassifier:
@@ -188,7 +243,7 @@ def predict_emotion(
     model: nn.Module,
     input_tensor: torch.Tensor,
     class_names: Tuple[str, ...],
-) -> Tuple[str, float]:
+) -> Tuple[str, float, torch.Tensor]:
     """
     Run emotion prediction on a preprocessed face tensor.
 
@@ -198,12 +253,12 @@ def predict_emotion(
         class_names: Tuple of emotion class labels.
 
     Returns:
-        Tuple of (predicted_emotion, confidence).
+        Tuple of (predicted_emotion, confidence, probabilities).
     """
     output = model(input_tensor)
-    probs = torch.softmax(output, dim=1)
-    confidence, index = probs.max(dim=1)
-    return class_names[index.item()], confidence.item()
+    probs = torch.softmax(output, dim=1)[0]
+    confidence, index = probs.max(dim=0)
+    return class_names[index.item()], confidence.item(), probs
 
 
 def draw_prediction(
@@ -239,6 +294,7 @@ def run_webcam(
     camera_index: int = 0,
     device: torch.device | None = None,
     class_names: tuple[str, ...] | None = None,
+    grayscale: bool = False,
 ) -> None:
     """
     Main webcam inference loop.
@@ -253,6 +309,7 @@ def run_webcam(
         camera_index: OpenCV camera device index.
         device: Computation device (default: auto-detect).
         class_names: Optional class label override.
+        grayscale: Convert frames to grayscale before inference.
     """
     if device is None:
         device = torch.device(
@@ -261,6 +318,7 @@ def run_webcam(
 
     # Load model and preprocessing pipeline
     print(f"Loading model: {model_name}")
+    print(f"Grayscale: {grayscale}")
     model, class_names = load_model_from_checkpoint(
         model_name, checkpoint_path, device,
         class_names=class_names,
@@ -269,16 +327,28 @@ def run_webcam(
 
     model_cfg = get_model_config(model_name)
     input_size = model_cfg["input_size"]
-    transform = build_transforms(input_size, grayscale=True)["eval"]
+    transform = build_transforms(input_size, grayscale=grayscale)["eval"]
 
     # Initialize face detector
     face_detector = build_face_detector()
+
+    # ── UDP Setup for TouchDesigner ─────────────────────
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    TD_IP = "127.0.0.1"
+    TD_PORT = 7000
+    SEND_INTERVAL = 0.05  # max 20 sends per second
+    _last_send = 0.0
+    # ────────────────────────────────────────────────────
 
     # Open webcam
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         print(f"Error: Cannot open camera (index={camera_index}).")
         return
+
+    # Resize display window to ~1/4 of screen area (half width, half height)
+    screen_w, screen_h = 1920, 1080
+    display_w, display_h = screen_w // 2, screen_h // 2
 
     print("Webcam started. Press 'q' to quit.")
     prev_time = time.time()
@@ -306,10 +376,19 @@ def run_webcam(
             input_tensor = preprocess_face(
                 face_crop, transform, device
             )
-            label, confidence = predict_emotion(
+            label, confidence, probs = predict_emotion(
                 model, input_tensor, class_names
             )
             draw_prediction(frame, bbox, label, confidence)
+
+            # ── Send probabilities to TouchDesigner via UDP ──
+            now = time.time()
+            if now - _last_send >= SEND_INTERVAL:
+                send_to_touchdesigner(
+                    probs, class_names, udp_sock, TD_IP, TD_PORT
+                )
+                _last_send = now
+            # ─────────────────────────────────────────────────
 
         # Compute and display FPS
         current_time = time.time()
@@ -320,13 +399,15 @@ def run_webcam(
             FONT, FONT_SCALE, FPS_COLOR, FONT_THICKNESS,
         )
 
-        cv2.imshow("Emotion Recognition", frame)
+        frame_resized = cv2.resize(frame, (display_w, display_h))
+        cv2.imshow("Emotion Recognition", frame_resized)
 
         # Exit on 'q' key press
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     cap.release()
+    udp_sock.close()
     cv2.destroyAllWindows()
     print("Webcam stopped.")
 
@@ -341,12 +422,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model", required=True,
-        help="Model architecture (mini_xception or "
-             "efficientnet_b0).",
+        help="Model architecture (mini_xception, "
+             "efficientnet_b0, resnet18, hsemotion).",
     )
     parser.add_argument(
         "--checkpoint", required=True,
         help="Path to the model checkpoint (.pth or .pt).",
+    )
+    parser.add_argument(
+        "--dataset", default=None,
+        choices=list(DATASET_DEFAULTS.keys()),
+        help="Dataset the model was trained on. "
+             "Automatically sets grayscale and class names. "
+             "Use 'ferplus' for FER+ models, 'raf_db' for "
+             "RAF-DB models.",
     )
     parser.add_argument(
         "--camera", type=int, default=0,
@@ -359,9 +448,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--classes", default=None,
         help="Comma-separated class names (e.g. "
-             "'angry,happy,neutral,sad,surprise'). Required for "
-             "raw state-dict checkpoints without embedded class "
-             "info.",
+             "'angry,happy,neutral,sad,suprise'). Overrides "
+             "dataset defaults.",
+    )
+    parser.add_argument(
+        "--grayscale", action="store_true", default=None,
+        help="Convert webcam frames to grayscale before "
+             "inference. Overrides the dataset default. "
+             "Use for models trained on grayscale datasets "
+             "(e.g. FER+).",
+    )
+    parser.add_argument(
+        "--no-grayscale", action="store_true", default=None,
+        help="Force RGB input (no grayscale conversion). "
+             "Overrides the dataset default.",
     )
     return parser.parse_args()
 
@@ -376,11 +476,28 @@ def main() -> None:
         else ("cuda" if torch.cuda.is_available() else "cpu")
     )
 
-    class_names = None
+    # Resolve defaults from dataset, then allow CLI overrides
+    if args.dataset:
+        defaults = DATASET_DEFAULTS[args.dataset]
+        grayscale = defaults["grayscale"]
+        class_names = defaults["classes"]
+        print(f"Dataset: {args.dataset} "
+              f"(grayscale={grayscale})")
+    else:
+        grayscale = False
+        class_names = EMOTION_CLASSES
+
+    # --classes overrides dataset default
     if args.classes:
         class_names = tuple(
             c.strip() for c in args.classes.split(",")
         )
+
+    # --grayscale / --no-grayscale override dataset default
+    if args.grayscale:
+        grayscale = True
+    elif args.no_grayscale:
+        grayscale = False
 
     run_webcam(
         model_name=args.model,
@@ -388,6 +505,7 @@ def main() -> None:
         camera_index=args.camera,
         device=device,
         class_names=class_names,
+        grayscale=grayscale,
     )
 
 
