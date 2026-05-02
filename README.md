@@ -49,7 +49,8 @@ adaptive-emotion-aware-virtual-interaction-system/
     ├── train_efficientnet_B0.ipynb
     ├── train_resnet.ipynb
     ├── train_hsemotion.ipynb
-    └── compare_models.ipynb    # Side-by-side model comparison
+    ├── compare_models.ipynb    # Side-by-side model comparison
+    └── cross_dataset_evaluation.ipynb  # FERPlus → RAF-DB generalization
 ```
 
 ## Installation
@@ -85,9 +86,21 @@ Compare all four trained models side by side:
 
 Open `notebooks/compare_models.ipynb` in Colab. The notebook evaluates
 all models on the same FERPlus test split and produces accuracy tables,
-per-class F1 charts, confusion matrices, training history overlays, and
-a parameter efficiency analysis. Outputs are saved to
-`results/model_comparison/`.
+per-class F1 charts, confusion matrices, training history overlays,
+parameter efficiency analysis, prediction confidence distributions,
+and Phase 1 vs Phase 2 training impact comparison. It also integrates
+findings from real-world image validation notebooks. Outputs are saved
+to `results/model_comparison/`.
+
+### Cross-Dataset Evaluation
+
+Test how well FERPlus-trained models generalize to real-world data:
+
+Open `notebooks/cross_dataset_evaluation.ipynb` in Colab. The notebook
+evaluates all four models on the RAF-DB test set and compares with
+FERPlus baselines to measure domain gap, per-class transfer, and
+confidence calibration. Outputs are saved to
+`results/cross_dataset_evaluation/`.
 
 ### Evaluation
 
