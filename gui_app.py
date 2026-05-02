@@ -20,8 +20,10 @@ See the README section at the bottom of this file for TD setup.
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 import gc
+import platform as _platform
+if _platform.system() == "Windows":
+    from ctypes import wintypes
 import json
 import os
 import socket
@@ -32,6 +34,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog
 from tkinter import messagebox
+import customtkinter as ctk
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -125,76 +128,100 @@ FRAME_INTERVAL = 1.0 / TARGET_FPS
 # the gaps. 3 → ~4 forwards/sec, which still feels real-time.
 SINGLE_INFER_EVERY = 3
 
-# Target display size for TouchDesigner Spout frames
-SPOUT_DISPLAY_SIZE = (1024, 1024)
+# Syphon sender name set in TouchDesigner (macOS only)
+SYPHON_SENDER_NAME = "EmotionViz"
 
-# Preview size for webcam/test image panel
-WEBCAM_PREVIEW_SIZE = (320, 240)
+# Target display size for TouchDesigner Spout/Syphon frames
+# Computed dynamically in EmotionGUI.__init__ from screen size.
+SPOUT_DISPLAY_SIZE = (800, 800)  # fallback; overridden at runtime
+
+# Preview size for webcam/test image panel (must match webcam_frame in UI)
+WEBCAM_PREVIEW_SIZE = (240, 180)
+
+# ── Platform font ────────────────────────────────────────────────
+_SYS = _platform.system()
+if _SYS == "Darwin":
+    UI_FONT = "Helvetica Neue"
+elif _SYS == "Windows":
+    UI_FONT = "Segoe UI"
+else:
+    UI_FONT = "DejaVu Sans"
 
 # ── GUI colour palette ───────────────────────────────────────────
-BG_COLOR = "#2B2B2B"
-PANEL_BG = "#363636"
-ACCENT = "#4A4A4A"
-TEXT_COLOR = "#E0E0E0"
+BG_COLOR = "#1E1E1E"
+PANEL_BG = "#2D2D2D"
+ACCENT = "#3C3C3C"
+TEXT_COLOR = "#D4D4D4"
 HEADING_COLOR = "#FFFFFF"
-BORDER_COLOR = "#555555"
-BTN_START = "#2E7D32"
-BTN_STOP = "#C62828"
-BAR_BG = "#4A4A4A"
+BORDER_COLOR = "#6A6A6A"
+BTN_START = "#1B9E3E"
+BTN_START_HOVER = "#22C44E"
+BTN_STOP = "#D32F2F"
+BTN_STOP_HOVER = "#EF5350"
+BTN_PRIMARY = "#1565C0"       # blue – Calibrate, Load Image
+BTN_PRIMARY_HOVER = "#1E88E5"
+BTN_SECONDARY = "#455A64"     # blue-grey – Load, Clear
+BTN_SECONDARY_HOVER = "#607D8B"
+BAR_BG = "#3C3C3C"
 
 
-# ── Hidden OpenGL context for Spout (Windows) ───────────────────
-class _PIXELFORMATDESCRIPTOR(ctypes.Structure):
-    _fields_ = [
-        ('nSize', wintypes.WORD), ('nVersion', wintypes.WORD),
-        ('dwFlags', wintypes.DWORD), ('iPixelType', ctypes.c_byte),
-        ('cColorBits', ctypes.c_byte),
-        ('cRedBits', ctypes.c_byte), ('cRedShift', ctypes.c_byte),
-        ('cGreenBits', ctypes.c_byte), ('cGreenShift', ctypes.c_byte),
-        ('cBlueBits', ctypes.c_byte), ('cBlueShift', ctypes.c_byte),
-        ('cAlphaBits', ctypes.c_byte), ('cAlphaShift', ctypes.c_byte),
-        ('cAccumBits', ctypes.c_byte),
-        ('cAccumRedBits', ctypes.c_byte), ('cAccumGreenBits', ctypes.c_byte),
-        ('cAccumBlueBits', ctypes.c_byte), ('cAccumAlphaBits', ctypes.c_byte),
-        ('cDepthBits', ctypes.c_byte), ('cStencilBits', ctypes.c_byte),
-        ('cAuxBuffers', ctypes.c_byte), ('iLayerType', ctypes.c_byte),
-        ('bReserved', ctypes.c_byte),
-        ('dwLayerMask', wintypes.DWORD), ('dwVisibleMask', wintypes.DWORD),
-        ('dwDamageMask', wintypes.DWORD),
-    ]
+# ── Hidden OpenGL context for Spout (Windows-only) ──────────────
+if _platform.system() == "Windows":
+    class _PIXELFORMATDESCRIPTOR(ctypes.Structure):
+        _fields_ = [
+            ('nSize', wintypes.WORD), ('nVersion', wintypes.WORD),
+            ('dwFlags', wintypes.DWORD), ('iPixelType', ctypes.c_byte),
+            ('cColorBits', ctypes.c_byte),
+            ('cRedBits', ctypes.c_byte), ('cRedShift', ctypes.c_byte),
+            ('cGreenBits', ctypes.c_byte), ('cGreenShift', ctypes.c_byte),
+            ('cBlueBits', ctypes.c_byte), ('cBlueShift', ctypes.c_byte),
+            ('cAlphaBits', ctypes.c_byte), ('cAlphaShift', ctypes.c_byte),
+            ('cAccumBits', ctypes.c_byte),
+            ('cAccumRedBits', ctypes.c_byte), ('cAccumGreenBits', ctypes.c_byte),
+            ('cAccumBlueBits', ctypes.c_byte), ('cAccumAlphaBits', ctypes.c_byte),
+            ('cDepthBits', ctypes.c_byte), ('cStencilBits', ctypes.c_byte),
+            ('cAuxBuffers', ctypes.c_byte), ('iLayerType', ctypes.c_byte),
+            ('bReserved', ctypes.c_byte),
+            ('dwLayerMask', wintypes.DWORD), ('dwVisibleMask', wintypes.DWORD),
+            ('dwDamageMask', wintypes.DWORD),
+        ]
 
+    def _create_hidden_gl_context():
+        """Create a hidden 1x1 window with an OpenGL context for Spout."""
+        _PFD_SUPPORT_OPENGL = 0x20
+        _PFD_DOUBLEBUFFER = 0x01
 
-def _create_hidden_gl_context():
-    """Create a hidden 1x1 window with an OpenGL context for Spout."""
-    _PFD_SUPPORT_OPENGL = 0x20
-    _PFD_DOUBLEBUFFER = 0x01
+        hwnd = ctypes.windll.user32.CreateWindowExW(
+            0, "STATIC", "SpoutGL", 0, 0, 0, 1, 1, 0, 0, 0, 0,
+        )
+        hdc = ctypes.windll.user32.GetDC(hwnd)
 
-    hwnd = ctypes.windll.user32.CreateWindowExW(
-        0, "STATIC", "SpoutGL", 0, 0, 0, 1, 1, 0, 0, 0, 0,
-    )
-    hdc = ctypes.windll.user32.GetDC(hwnd)
+        pfd = _PIXELFORMATDESCRIPTOR()
+        pfd.nSize = ctypes.sizeof(_PIXELFORMATDESCRIPTOR)
+        pfd.nVersion = 1
+        pfd.dwFlags = _PFD_SUPPORT_OPENGL | _PFD_DOUBLEBUFFER
+        pfd.cColorBits = 32
+        pfd.cDepthBits = 24
 
-    pfd = _PIXELFORMATDESCRIPTOR()
-    pfd.nSize = ctypes.sizeof(_PIXELFORMATDESCRIPTOR)
-    pfd.nVersion = 1
-    pfd.dwFlags = _PFD_SUPPORT_OPENGL | _PFD_DOUBLEBUFFER
-    pfd.cColorBits = 32
-    pfd.cDepthBits = 24
+        fmt = ctypes.windll.gdi32.ChoosePixelFormat(hdc, ctypes.byref(pfd))
+        ctypes.windll.gdi32.SetPixelFormat(hdc, fmt, ctypes.byref(pfd))
 
-    fmt = ctypes.windll.gdi32.ChoosePixelFormat(hdc, ctypes.byref(pfd))
-    ctypes.windll.gdi32.SetPixelFormat(hdc, fmt, ctypes.byref(pfd))
+        hglrc = ctypes.windll.opengl32.wglCreateContext(hdc)
+        ctypes.windll.opengl32.wglMakeCurrent(hdc, hglrc)
+        return hwnd, hdc, hglrc
 
-    hglrc = ctypes.windll.opengl32.wglCreateContext(hdc)
-    ctypes.windll.opengl32.wglMakeCurrent(hdc, hglrc)
-    return hwnd, hdc, hglrc
+    def _destroy_hidden_gl_context(hwnd, hdc, hglrc):
+        """Clean up the hidden OpenGL context."""
+        ctypes.windll.opengl32.wglMakeCurrent(0, 0)
+        ctypes.windll.opengl32.wglDeleteContext(hglrc)
+        ctypes.windll.user32.ReleaseDC(hwnd, hdc)
+        ctypes.windll.user32.DestroyWindow(hwnd)
+else:
+    def _create_hidden_gl_context():
+        return None, None, None
 
-
-def _destroy_hidden_gl_context(hwnd, hdc, hglrc):
-    """Clean up the hidden OpenGL context."""
-    ctypes.windll.opengl32.wglMakeCurrent(0, 0)
-    ctypes.windll.opengl32.wglDeleteContext(hglrc)
-    ctypes.windll.user32.ReleaseDC(hwnd, hdc)
-    ctypes.windll.user32.DestroyWindow(hwnd)
+    def _destroy_hidden_gl_context(hwnd, hdc, hglrc):
+        pass
 
 
 # ═════════════════════════════════════════════════════════════════
@@ -208,8 +235,54 @@ class EmotionGUI:
         self.root.title(
             "TouchDesigner Interface \u2014 Adaptive Emotion Visualization"
         )
-        self.root.configure(bg=BG_COLOR)
-        self.root.state("zoomed")
+
+        # ── Dark colour theme for TTK widgets ───────────────────
+        # ctk.set_appearance_mode / set_default_color_theme require
+        # Tk 8.6+; we have Tk 8.5 on macOS, so call them only on
+        # platforms where Tk 8.6+ is available (Windows / Linux).
+        _tk_ver = tuple(int(x) for x in self.root.tk.eval(
+            "info patchlevel"
+        ).split("."))
+        if _tk_ver >= (8, 6):
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("dark-blue")
+        else:
+            # Tk 8.5 (macOS system Python) — configure ttk style manually
+            _s = ttk.Style()
+            try:
+                _s.theme_use("default")
+            except tk.TclError:
+                pass
+            _s.configure("TCombobox",
+                          background=ACCENT, foreground=TEXT_COLOR,
+                          fieldbackground=ACCENT,
+                          selectbackground=ACCENT,
+                          selectforeground=TEXT_COLOR)
+            _s.map("TCombobox",
+                   fieldbackground=[("readonly", ACCENT)],
+                   selectbackground=[("readonly", ACCENT)],
+                   foreground=[("readonly", TEXT_COLOR)])
+            _s.configure("TProgressbar",
+                          troughcolor=ACCENT, background="#4CAF50")
+
+        # ── Platform maximization ────────────────────────────────
+        self.root.update_idletasks()
+        scr_w = self.root.winfo_screenwidth()
+        scr_h = self.root.winfo_screenheight()
+        if _platform.system() == "Windows":
+            self.root.state("zoomed")
+        elif _platform.system() == "Darwin":
+            usable_h = scr_h - 45 - 80
+            self.root.geometry(f"{scr_w}x{usable_h}+0+45")
+            self.root.update_idletasks()
+        else:
+            self.root.attributes("-zoomed", True)
+
+        # ── Dynamic visualization canvas size ────────────────────
+        # Keep the canvas square and small enough for the center panel.
+        canvas_dim = min(int(scr_w * 0.48), int(scr_h * 0.72), 760)
+        global SPOUT_DISPLAY_SIZE
+        SPOUT_DISPLAY_SIZE = (canvas_dim, canvas_dim)
 
         # ── State variables ──────────────────────────────────────
         self.running = False
@@ -217,9 +290,12 @@ class EmotionGUI:
         self.model: Optional[torch.nn.Module] = None
         self.class_names: Tuple[str, ...] = EMOTION_CLASSES
         self.transform: Optional[transforms.Compose] = None
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         if self.device.type == "cpu":
             # Limit to 2 threads: 4+ threads pin every core to ~100% and
             # starve Tkinter/OpenCV. 2 leaves headroom for the rest of
@@ -293,8 +369,14 @@ class EmotionGUI:
         self._init_spout()
 
         # ── Build UI ─────────────────────────────────────────────
+        print("[GUI] Building title bar...")
         self._build_title_bar()
+        print("[GUI] Building panels...")
         self._build_panels()
+        self.root.update_idletasks()
+        print(f"[GUI] Window geometry after build: {self.root.winfo_width()}x{self.root.winfo_height()}")
+        print(f"[GUI] Screen size: {self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}")
+        print("[GUI] UI build complete. Loading default model...")
         self._load_default_model()
 
         # Handle window close
@@ -304,18 +386,96 @@ class EmotionGUI:
     #  Optional: Spout Receiver for TouchDesigner
     # ─────────────────────────────────────────────────────────────
     def _init_spout(self) -> None:
-        """Check whether SpoutGL is available."""
-        try:
-            import SpoutGL                          # noqa: F401
-            from OpenGL import GL as _GL            # noqa: F401
-            self._spout_available = True
-            print("[INFO] SpoutGL available – will receive TD frames.")
-        except ImportError:
+        """Check whether SpoutGL (Windows) or Syphon (macOS) is available."""
+        self._spout_protocol = None
+        if _platform.system() == "Windows":
+            try:
+                import SpoutGL                      # noqa: F401
+                from OpenGL import GL as _GL        # noqa: F401
+                self._spout_available = True
+                self._spout_protocol = "spout"
+                print("[INFO] SpoutGL available – will receive TD frames.")
+            except ImportError:
+                self._spout_available = False
+                print("[INFO] SpoutGL not found – Spout disabled.")
+        elif _platform.system() == "Darwin":
+            try:
+                import syphon                       # noqa: F401
+                self._spout_available = True
+                self._spout_protocol = "syphon"
+                print("[INFO] Syphon available – will receive TD frames.")
+            except ImportError:
+                self._spout_available = False
+                print("[INFO] syphon-python not found – Syphon disabled.")
+                print("[INFO] UDP → TouchDesigner still fully active.")
+            except Exception as _e:
+                self._spout_available = False
+                print(f"[INFO] Syphon import failed ({type(_e).__name__}: {_e}) – Syphon disabled.")
+                print("[INFO] UDP → TouchDesigner still fully active.")
+        else:
             self._spout_available = False
-            print("[INFO] SpoutGL not found – Spout receiving disabled.")
+            print("[INFO] Texture sharing not supported on this platform.")
+
+    def _syphon_receive_loop(self) -> None:
+        """Background thread: receive TouchDesigner frames via Syphon (macOS)."""
+        from syphon.server_directory import SyphonServerDirectory
+        from syphon.client import SyphonMetalClient
+        from syphon.utils.numpy import copy_mtl_texture_to_image
+
+        directory = SyphonServerDirectory()
+        client = None
+
+        try:
+            while self.running:
+                # Re-connect if needed
+                if client is None or not client.is_valid:
+                    # Try the named sender first, fall back to any sender
+                    servers = directory.servers_matching_name(name=SYPHON_SENDER_NAME)
+                    if not servers:
+                        servers = directory.servers
+                    if servers:
+                        try:
+                            client = SyphonMetalClient(servers[0])
+                            self._spout_connected = True
+                            print(
+                                f"[INFO] Syphon connected: "
+                                f"{servers[0].name} ({servers[0].app_name})"
+                            )
+                        except Exception as e:
+                            print(f"[WARNING] Syphon connect error: {e}")
+                            client = None
+                            self._spout_connected = False
+                    else:
+                        self._spout_connected = False
+                    time.sleep(1.0)
+                    continue
+
+                if client.has_new_frame:
+                    try:
+                        texture = client.new_frame_image
+                        if texture is not None:
+                            bgra = copy_mtl_texture_to_image(texture)
+                            # Metal textures are BGRA; convert to RGB
+                            # for correct colour display in PIL/tkinter.
+                            self._latest_spout_frame = cv2.cvtColor(
+                                bgra, cv2.COLOR_BGRA2RGB,
+                            )
+                    except Exception as e:
+                        print(f"[WARNING] Syphon frame error: {e}")
+
+                time.sleep(0.016)
+        except Exception as exc:
+            print(f"[WARNING] Syphon receive error: {exc}")
+        finally:
+            if client is not None:
+                try:
+                    client.stop()
+                except Exception:
+                    pass
+            self._spout_connected = False
 
     def _spout_receive_loop(self) -> None:
-        """Background thread: receive TouchDesigner frames via Spout."""
+        """Background thread: receive TouchDesigner frames via Spout (Windows)."""
         import SpoutGL
         from OpenGL import GL
 
@@ -362,59 +522,114 @@ class EmotionGUI:
     #  UI Construction
     # ─────────────────────────────────────────────────────────────
     def _build_title_bar(self) -> None:
-        title = tk.Label(
-            self.root,
+        print("[GUI]   _build_title_bar: creating title frame")
+        title_frame = tk.Frame(self.root, bg="#252526", pady=0)
+        title_frame.pack(side=tk.TOP, fill=tk.X)
+        tk.Frame(title_frame, bg="#007ACC", height=3).pack(fill=tk.X)
+        tk.Label(
+            title_frame,
             text="TouchDesigner Interface \u2014 "
                  "Adaptive Emotion Visualization",
-            font=("Segoe UI", 16, "bold"),
-            bg=BG_COLOR, fg=HEADING_COLOR,
-            pady=10,
-        )
-        title.pack(side=tk.TOP, fill=tk.X)
+            font=(UI_FONT, 14, "bold"),
+            bg="#252526", fg="#CCCCCC",
+            pady=8,
+        ).pack()
 
     def _build_panels(self) -> None:
+        print("[GUI]   _build_panels: creating container frame")
         container = tk.Frame(self.root, bg=BG_COLOR)
-        container.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        container.columnconfigure(0, weight=2, uniform="side")
-        container.columnconfigure(1, weight=5)
-        container.columnconfigure(2, weight=2, uniform="side")
+        container.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
+        print("[GUI]   _build_panels: container packed")
 
+        # Use pack layout instead of grid — grid is unreliable on
+        # macOS Tk 8.5 (columns collapse to zero width).
+        # Pack order: LEFT panel first, RIGHT panel second, CENTER
+        # last so it fills the remaining space.
+        print("[GUI]   _build_panels: building control panel (LEFT)...")
         self._build_control_panel(container)
-        self._build_visualization_panel(container)
+        print("[GUI]   _build_panels: building monitoring panel (RIGHT)...")
         self._build_monitoring_panel(container)
+        print("[GUI]   _build_panels: building visualization panel (CENTER)...")
+        self._build_visualization_panel(container)
+        print("[GUI]   _build_panels: all panels built")
 
     # ── LEFT: Control Panel ──────────────────────────────────────
     def _build_control_panel(self, parent: tk.Frame) -> None:
+        print("[GUI]     _build_control_panel: start")
         panel = tk.Frame(
             parent, bg=PANEL_BG,
             highlightbackground=BORDER_COLOR, highlightthickness=1,
         )
-        panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4))
+        panel.pack_propagate(False)
+        panel.configure(width=260)
+        print("[GUI]     _build_control_panel: panel packed (side=LEFT, width=260)")
 
         self._section_label(panel, "Control Panel")
+        print("[GUI]     _build_control_panel: section label done")
 
         # Model Selection
         self._heading(panel, "Model Selection")
+        print("[GUI]     _build_control_panel: Model Selection heading done")
         self.model_var = tk.StringVar(value="ResNet-18")
         model_menu = ttk.Combobox(
             panel, textvariable=self.model_var,
             values=list(MODEL_OPTIONS.keys()) + ["Ensemble"],
-            state="readonly", font=("Segoe UI", 11),
+            state="readonly", font=(UI_FONT, 11),
         )
         model_menu.pack(padx=15, pady=(0, 8), fill=tk.X)
         model_menu.bind("<<ComboboxSelected>>", self._on_model_change)
         self.model_menu = model_menu
+        print("[GUI]     _build_control_panel: model combobox packed")
 
-        # Ensemble settings panel (hidden by default)
+        # Ensemble settings — scrollable container (hidden by default)
+        # Outer frame with a max height; packs only when Ensemble is
+        # selected.  Inner canvas + scrollbar give real scrolling.
         self.ensemble_panel = tk.Frame(panel, bg=PANEL_BG)
-        # Not packed yet — shown only when "Ensemble" is selected
 
-        # Hint label at the very top so it's always visible, even when
-        # the control panel is tight. `height=1` reserves one line so
-        # the layout doesn't jump when text appears.
+        _ens_canvas = tk.Canvas(
+            self.ensemble_panel, bg=PANEL_BG,
+            highlightthickness=0, bd=0, height=180,
+        )
+        _ens_sb = tk.Scrollbar(
+            self.ensemble_panel, orient=tk.VERTICAL,
+            command=_ens_canvas.yview, width=8,
+        )
+        _ens_canvas.configure(yscrollcommand=_ens_sb.set)
+        _ens_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        _ens_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        _ens_inner = tk.Frame(_ens_canvas, bg=PANEL_BG)
+        _ens_win = _ens_canvas.create_window(
+            (0, 0), window=_ens_inner, anchor="nw",
+        )
+
+        def _ens_cfg(_e=None):
+            _ens_canvas.configure(scrollregion=_ens_canvas.bbox("all"))
+        def _ens_canvas_cfg(e):
+            _ens_canvas.itemconfig(_ens_win, width=e.width)
+        _ens_inner.bind("<Configure>", _ens_cfg)
+        _ens_canvas.bind("<Configure>", _ens_canvas_cfg)
+
+        # Mouse-wheel scrolling only inside ensemble area
+        def _ens_wheel(evt):
+            if _platform.system() == "Darwin":
+                _ens_canvas.yview_scroll(-evt.delta, "units")
+            else:
+                _ens_canvas.yview_scroll(
+                    -1 if evt.delta > 0 else 1, "units",
+                )
+        def _ens_enter(_e):
+            _ens_canvas.bind_all("<MouseWheel>", _ens_wheel)
+        def _ens_leave(_e):
+            _ens_canvas.unbind_all("<MouseWheel>")
+        _ens_canvas.bind("<Enter>", _ens_enter)
+        _ens_canvas.bind("<Leave>", _ens_leave)
+
+        # ── Ensemble widgets (inside scrollable inner frame) ─────
         self.ensemble_hint_label = tk.Label(
-            self.ensemble_panel, text="",
-            font=("Segoe UI", 9, "italic"),
+            _ens_inner, text="",
+            font=(UI_FONT, 9, "italic"),
             bg=PANEL_BG, fg="#E6B800",
             height=1, anchor="w",
         )
@@ -423,13 +638,11 @@ class EmotionGUI:
         )
         self._ensemble_hint_after: Optional[str] = None
 
-        # Strategy selector — placed first so it's always visible even
-        # when the panel gets tight.
-        strat_frame = tk.Frame(self.ensemble_panel, bg=PANEL_BG)
+        strat_frame = tk.Frame(_ens_inner, bg=PANEL_BG)
         strat_frame.pack(padx=15, fill=tk.X, pady=(0, 6))
         tk.Label(
             strat_frame, text="Strategy:",
-            font=("Segoe UI", 10), bg=PANEL_BG, fg=TEXT_COLOR,
+            font=(UI_FONT, 10), bg=PANEL_BG, fg=TEXT_COLOR,
         ).pack(side=tk.LEFT)
         self.ensemble_strategy_var = tk.StringVar(
             value="weighted_avg",
@@ -438,68 +651,71 @@ class EmotionGUI:
             strat_frame,
             textvariable=self.ensemble_strategy_var,
             values=["weighted_avg", "max_confidence"],
-            state="readonly", font=("Segoe UI", 10), width=16,
+            state="readonly", font=(UI_FONT, 10), width=16,
         )
         strat_menu.pack(side=tk.LEFT, padx=(6, 0))
 
         tk.Label(
-            self.ensemble_panel, text="Include models:",
-            font=("Segoe UI", 10), bg=PANEL_BG, fg=TEXT_COLOR,
+            _ens_inner, text="Include models:",
+            font=(UI_FONT, 10), bg=PANEL_BG, fg=TEXT_COLOR,
         ).pack(padx=15, anchor="w")
 
         self.ensemble_model_vars: Dict[str, tk.BooleanVar] = {}
         for model_name in MODEL_OPTIONS:
             var = tk.BooleanVar(value=(model_name != "Mini-Xception"))
             chk = tk.Checkbutton(
-                self.ensemble_panel, text=model_name,
+                _ens_inner, text=model_name,
                 variable=var, bg=PANEL_BG,
                 fg=TEXT_COLOR, selectcolor=ACCENT,
                 activebackground=PANEL_BG,
                 activeforeground=TEXT_COLOR,
-                font=("Segoe UI", 10),
+                font=(UI_FONT, 10),
                 command=lambda n=model_name: self._on_ensemble_toggle(n),
             )
             chk.pack(padx=25, anchor="w")
             self.ensemble_model_vars[model_name] = var
 
         # UDP Settings
+        print("[GUI]     _build_control_panel: UDP Settings heading...")
         self._heading(panel, "UDP Settings")
         udp_frame = tk.Frame(panel, bg=PANEL_BG)
         udp_frame.pack(padx=15, fill=tk.X)
 
         tk.Label(
             udp_frame, text="Port:", bg=PANEL_BG, fg=TEXT_COLOR,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
         ).grid(row=0, column=0, sticky="w")
         self.port_var = tk.StringVar(value=str(DEFAULT_UDP_PORT))
         port_entry = tk.Entry(
             udp_frame, textvariable=self.port_var, width=8,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
         )
         port_entry.grid(row=0, column=1, padx=(5, 15))
 
         tk.Label(
             udp_frame, text="Host:", bg=PANEL_BG, fg=TEXT_COLOR,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
         ).grid(row=0, column=2, sticky="w")
         self.host_var = tk.StringVar(value=DEFAULT_UDP_IP)
         host_entry = tk.Entry(
             udp_frame, textvariable=self.host_var, width=12,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
         )
         host_entry.grid(row=0, column=3)
 
         # Sensitivity
+        print("[GUI]     _build_control_panel: Sensitivity heading...")
         self._heading(panel, "Sensitivity")
         self.sensitivity_var = tk.DoubleVar(value=0.3)
         sens_slider = tk.Scale(
             panel, from_=0.0, to=1.0, resolution=0.05,
             orient=tk.HORIZONTAL, variable=self.sensitivity_var,
             bg=PANEL_BG, fg=TEXT_COLOR, troughcolor=ACCENT,
-            highlightthickness=0, font=("Segoe UI", 9),
+            highlightthickness=0, font=(UI_FONT, 9),
             command=self._on_sensitivity_change,
         )
         sens_slider.pack(padx=15, fill=tk.X)
+        print("[GUI]     _build_control_panel: sensitivity slider packed")
 
         # Grad-CAM toggle — off by default (CPU-heavy backward pass).
         self.gradcam_var = tk.BooleanVar(value=False)
@@ -508,65 +724,74 @@ class EmotionGUI:
             variable=self.gradcam_var, bg=PANEL_BG,
             fg=TEXT_COLOR, selectcolor=ACCENT,
             activebackground=PANEL_BG, activeforeground=TEXT_COLOR,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
             command=self._on_gradcam_toggle,
         )
         gradcam_chk.pack(padx=15, anchor="w", pady=(4, 0))
+        print("[GUI]     _build_control_panel: grad-cam checkbox packed")
 
         # Calibration
+        print("[GUI]     _build_control_panel: Calibration heading...")
         self._heading(panel, "Calibration")
         self.cal_status_label = tk.Label(
             panel, text="Inactive",
-            font=("Segoe UI", 10), fg="#888888", bg=PANEL_BG,
+            font=(UI_FONT, 10), fg="#888888", bg=PANEL_BG,
         )
         self.cal_status_label.pack(padx=15, anchor="w")
 
         cal_btn_frame = tk.Frame(panel, bg=PANEL_BG)
         cal_btn_frame.pack(padx=15, fill=tk.X, pady=(4, 0))
 
-        self.calibrate_btn = tk.Button(
+        self.calibrate_btn = ctk.CTkButton(
             cal_btn_frame, text="Calibrate",
-            font=("Segoe UI", 10), bg=ACCENT, fg=TEXT_COLOR,
-            activebackground="#5A5A5A", relief=tk.FLAT,
+            font=(UI_FONT, 11, "bold"),
+            fg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER,
+            text_color="white", corner_radius=6, height=28, width=0,
             command=self._open_calibration_wizard,
         )
         self.calibrate_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 3))
 
-        self.load_cal_btn = tk.Button(
+        self.load_cal_btn = ctk.CTkButton(
             cal_btn_frame, text="Load",
-            font=("Segoe UI", 10), bg=ACCENT, fg=TEXT_COLOR,
-            activebackground="#5A5A5A", relief=tk.FLAT,
+            font=(UI_FONT, 11),
+            fg_color=BTN_SECONDARY, hover_color=BTN_SECONDARY_HOVER,
+            text_color="white", corner_radius=6, height=28, width=0,
             command=self._load_calibration_profile,
         )
         self.load_cal_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 3))
 
-        self.clear_cal_btn = tk.Button(
+        self.clear_cal_btn = ctk.CTkButton(
             cal_btn_frame, text="Clear",
-            font=("Segoe UI", 10), bg=ACCENT, fg=TEXT_COLOR,
-            activebackground="#5A5A5A", relief=tk.FLAT,
+            font=(UI_FONT, 11),
+            fg_color=BTN_SECONDARY, hover_color=BTN_SECONDARY_HOVER,
+            text_color="white", corner_radius=6, height=28, width=0,
             command=self._clear_calibration,
         )
         self.clear_cal_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        print("[GUI]     _build_control_panel: calibration buttons packed")
 
         # Webcam Preview
+        print("[GUI]     _build_control_panel: Webcam Preview heading...")
         self._heading(panel, "Webcam Preview")
         webcam_frame = tk.Frame(
             panel,
             bg="#1A1A1A",
-            width=WEBCAM_PREVIEW_SIZE[0],
-            height=WEBCAM_PREVIEW_SIZE[1],
+            width=240,
+            height=180,
         )
-        webcam_frame.pack(padx=15, pady=(0, 8))
+        webcam_frame.pack(padx=10, pady=(0, 6))
         webcam_frame.pack_propagate(False)
+        print("[GUI]     _build_control_panel: webcam frame packed")
 
         self.webcam_canvas = tk.Label(
             webcam_frame, bg="#1A1A1A",
             text="Camera Off", fg="#666666",
-            font=("Segoe UI", 12),
+            font=(UI_FONT, 11),
         )
         self.webcam_canvas.pack(fill=tk.BOTH, expand=True)
 
         # Test Image
+        print("[GUI]     _build_control_panel: Test Image heading...")
         self._heading(panel, "Test Image")
         test_frame = tk.Frame(panel, bg=PANEL_BG)
         test_frame.pack(padx=15, pady=(0, 8), fill=tk.X)
@@ -581,19 +806,17 @@ class EmotionGUI:
             selectcolor=ACCENT,
             activebackground=PANEL_BG,
             activeforeground=TEXT_COLOR,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
             command=self._on_test_image_toggle,
         )
         test_toggle.pack(side=tk.LEFT)
 
-        test_btn = tk.Button(
-            test_frame,
-            text="Load Image",
-            font=("Segoe UI", 10),
-            bg=ACCENT,
-            fg=TEXT_COLOR,
-            activebackground="#5A5A5A",
-            relief=tk.FLAT,
+        test_btn = ctk.CTkButton(
+            test_frame, text="Load",
+            font=(UI_FONT, 11),
+            fg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER,
+            text_color="white", corner_radius=6,
+            width=70, height=28,
             command=self._load_test_image,
         )
         test_btn.pack(side=tk.RIGHT)
@@ -602,41 +825,49 @@ class EmotionGUI:
         btn_frame = tk.Frame(panel, bg=PANEL_BG)
         btn_frame.pack(padx=15, pady=(5, 15), fill=tk.X)
 
-        self.start_btn = tk.Button(
-            btn_frame, text="START", font=("Segoe UI", 14, "bold"),
-            bg=BTN_START, fg="white", activebackground="#388E3C",
-            relief=tk.FLAT, cursor="hand2",
+        self.start_btn = ctk.CTkButton(
+            btn_frame, text="START",
+            font=(UI_FONT, 14, "bold"),
+            fg_color=BTN_START, hover_color=BTN_START_HOVER,
+            text_color="white", corner_radius=6, height=32, width=0,
             command=self._start,
         )
         self.start_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
 
-        self.stop_btn = tk.Button(
-            btn_frame, text="STOP", font=("Segoe UI", 14, "bold"),
-            bg=BTN_STOP, fg="white", activebackground="#D32F2F",
-            relief=tk.FLAT, cursor="hand2",
+        self.stop_btn = ctk.CTkButton(
+            btn_frame, text="STOP",
+            font=(UI_FONT, 14, "bold"),
+            fg_color=BTN_STOP, hover_color=BTN_STOP_HOVER,
+            text_color="white", corner_radius=6, height=32, width=0,
             command=self._stop, state=tk.DISABLED,
         )
         self.stop_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
+        print("[GUI]     _build_control_panel: START/STOP buttons packed — DONE")
 
     # ── CENTER: Visualization ────────────────────────────────────
     def _build_visualization_panel(self, parent: tk.Frame) -> None:
+        print("[GUI]     _build_visualization_panel: start")
         panel = tk.Frame(
             parent, bg="#0A0A0A",
             highlightbackground=BORDER_COLOR, highlightthickness=1,
         )
-        panel.grid(row=0, column=1, sticky="nsew", padx=5)
+        panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
+        print("[GUI]     _build_visualization_panel: panel packed (fill=BOTH, expand=True)")
 
         header = tk.Label(
             panel,
             text="Particle Visualization Area",
-            font=("Segoe UI", 13, "italic"),
+            font=(UI_FONT, 12, "italic"),
             bg="#0A0A0A", fg="#888888",
         )
-        header.pack(pady=(8, 0))
+        header.pack(pady=(6, 0))
+        print("[GUI]     _build_visualization_panel: header label packed")
 
         viz_frame = tk.Frame(panel, bg="#0A0A0A")
         viz_frame.pack(expand=True)
+        print("[GUI]     _build_visualization_panel: viz_frame packed")
 
+        print(f"[GUI]     _build_visualization_panel: canvas size = {SPOUT_DISPLAY_SIZE}")
         self.viz_canvas = tk.Canvas(
             viz_frame,
             width=SPOUT_DISPLAY_SIZE[0],
@@ -646,49 +877,70 @@ class EmotionGUI:
         )
         self.viz_canvas.pack(padx=4, pady=4)
         self._spout_canvas_image = None
+        print("[GUI]     _build_visualization_panel: canvas packed")
 
         # Dominant emotion overlay (big text on the center panel)
         # Hidden by default; shown only when Spout is NOT connected
         self.viz_emotion_label = tk.Label(
             self.viz_canvas,
             text="",
-            font=("Segoe UI", 48, "bold"),
+            font=(UI_FONT, 48, "bold"),
             bg="#0A0A0A", fg="#FFD700",
         )
         self._viz_emotion_visible = False
 
         # Placeholder text when TD is not connected
+        if _platform.system() == "Darwin":
+            _placeholder_text = (
+                "TouchDesigner'a UDP ile bağlanıldı\n"
+                "Texture paylaşımı için Syphon gereklidir\n"
+                "(pip install syphon-python)\n\n"
+                "UDP verisi gönderiliyor:\n"
+                f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}"
+            )
+        else:
+            _placeholder_text = (
+                "Connect TouchDesigner via Spout\n"
+                "or run TD alongside this application.\n\n"
+                "UDP data is being sent to\n"
+                f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}"
+            )
         self.viz_placeholder = tk.Label(
             self.viz_canvas,
-            text="Connect TouchDesigner via Spout\n"
-                 "or run TD alongside this application.\n\n"
-                 "UDP data is being sent to\n"
-                 f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}",
-            font=("Segoe UI", 11),
+            text=_placeholder_text,
+            font=(UI_FONT, 11),
             bg="#0A0A0A", fg="#555555",
             justify=tk.CENTER,
         )
         self.viz_placeholder.place(relx=0.5, rely=0.7, anchor="center")
+        print("[GUI]     _build_visualization_panel: placeholder label placed")
 
         footer = tk.Label(
             panel,
             text="Real-time adaptive particle rendering",
-            font=("Segoe UI", 9, "italic"),
+            font=(UI_FONT, 9, "italic"),
             bg="#0A0A0A", fg="#555555",
         )
         footer.pack(side=tk.BOTTOM, pady=(0, 6))
+        print("[GUI]     _build_visualization_panel: footer packed — DONE")
 
     # ── RIGHT: Monitoring ────────────────────────────────────────
     def _build_monitoring_panel(self, parent: tk.Frame) -> None:
+        print("[GUI]     _build_monitoring_panel: start")
         panel = tk.Frame(
             parent, bg=PANEL_BG,
             highlightbackground=BORDER_COLOR, highlightthickness=1,
         )
-        panel.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
+        panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 0))
+        panel.pack_propagate(False)
+        panel.configure(width=260)
+        print("[GUI]     _build_monitoring_panel: panel packed (side=RIGHT, width=260)")
 
         self._section_label(panel, "Monitoring")
+        print("[GUI]     _build_monitoring_panel: section label done")
 
         # Emotion Probabilities
+        print("[GUI]     _build_monitoring_panel: Emotion Probabilities heading...")
         self._heading(panel, "Emotion Probabilities")
         self.prob_bars: Dict[str, Dict] = {}
         # Display order: happy, neutral, surprise, sad, angry
@@ -700,7 +952,7 @@ class EmotionGUI:
             color = EMOTION_HEX[emotion]
             label = tk.Label(
                 row, text=emotion.capitalize(),
-                font=("Segoe UI", 10, "bold"),
+                font=(UI_FONT, 10, "bold"),
                 fg=color, bg=PANEL_BG, width=8, anchor="e",
             )
             label.pack(side=tk.LEFT)
@@ -718,7 +970,7 @@ class EmotionGUI:
             bar_fill.place(x=0, y=0, relheight=1.0, relwidth=0.0)
 
             pct_label = tk.Label(
-                row, text="0%", font=("Segoe UI", 9),
+                row, text="0%", font=(UI_FONT, 9),
                 fg=TEXT_COLOR, bg=PANEL_BG, width=5, anchor="w",
             )
             pct_label.pack(side=tk.LEFT)
@@ -728,6 +980,7 @@ class EmotionGUI:
                 "fill": bar_fill,
                 "pct": pct_label,
             }
+        print("[GUI]     _build_monitoring_panel: emotion probability bars packed")
 
         # Separator
         self._separator(panel)
@@ -740,14 +993,14 @@ class EmotionGUI:
 
         self.dominant_label = tk.Label(
             dominant_frame, text="---",
-            font=("Segoe UI", 22, "bold"),
+            font=(UI_FONT, 22, "bold"),
             bg=PANEL_BG, fg="#FFD700",
         )
         self.dominant_label.pack(expand=True)
 
         self.dominant_tag_label = tk.Label(
             panel, text="",
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
             bg=PANEL_BG, fg="#AAAAAA",
         )
         self.dominant_tag_label.pack(pady=(0, 4))
@@ -762,21 +1015,21 @@ class EmotionGUI:
 
         self.fps_label = tk.Label(
             perf_frame, text="FPS: --",
-            font=("Segoe UI", 11), fg=TEXT_COLOR, bg=PANEL_BG,
+            font=(UI_FONT, 11), fg=TEXT_COLOR, bg=PANEL_BG,
             anchor="w",
         )
         self.fps_label.pack(fill=tk.X)
 
         self.latency_label = tk.Label(
             perf_frame, text="Latency: -- ms",
-            font=("Segoe UI", 11), fg=TEXT_COLOR, bg=PANEL_BG,
+            font=(UI_FONT, 11), fg=TEXT_COLOR, bg=PANEL_BG,
             anchor="w",
         )
         self.latency_label.pack(fill=tk.X)
 
         self.udp_label = tk.Label(
             perf_frame, text="UDP Recv: Idle",
-            font=("Segoe UI", 11), fg=TEXT_COLOR, bg=PANEL_BG,
+            font=(UI_FONT, 11), fg=TEXT_COLOR, bg=PANEL_BG,
             anchor="w",
         )
         self.udp_label.pack(fill=tk.X)
@@ -784,16 +1037,17 @@ class EmotionGUI:
         self.device_label = tk.Label(
             perf_frame,
             text=f"Device: {self.device}",
-            font=("Segoe UI", 10), fg="#888888", bg=PANEL_BG,
+            font=(UI_FONT, 10), fg="#888888", bg=PANEL_BG,
             anchor="w",
         )
         self.device_label.pack(fill=tk.X, pady=(8, 0))
+        print("[GUI]     _build_monitoring_panel: performance labels packed — DONE")
 
     # ── UI helpers ───────────────────────────────────────────────
     def _section_label(self, parent: tk.Frame, text: str) -> None:
         tk.Label(
             parent, text=text,
-            font=("Segoe UI", 14, "bold"),
+            font=(UI_FONT, 14, "bold"),
             bg=PANEL_BG, fg=HEADING_COLOR,
         ).pack(pady=(10, 4))
 
@@ -805,7 +1059,7 @@ class EmotionGUI:
         )
         tk.Label(
             frame, text=f"  {text}  ",
-            font=("Segoe UI", 10), bg=PANEL_BG, fg="#AAAAAA",
+            font=(UI_FONT, 10), bg=PANEL_BG, fg="#AAAAAA",
         ).pack(side=tk.LEFT)
         tk.Frame(frame, bg=BORDER_COLOR, height=1).pack(
             side=tk.LEFT, fill=tk.X, expand=True, pady=8,
@@ -1111,6 +1365,8 @@ class EmotionGUI:
             self.use_test_image_var.set(False)
             print("[WARNING] No test image loaded.")
             return
+        if self.use_test_image and not self.running:
+            self._process_test_image()
 
     def _load_test_image(self) -> None:
         path = filedialog.askopenfilename(
@@ -1136,12 +1392,7 @@ class EmotionGUI:
         self.test_image_path = path
         self.use_test_image = True
         self.use_test_image_var.set(True)
-        # Show raw preview only; processing starts with START
-        self._latest_frame = self._cv2_to_tk(
-            image, WEBCAM_PREVIEW_SIZE[0], WEBCAM_PREVIEW_SIZE[1],
-        )
-        self.webcam_canvas.configure(image=self._latest_frame, text="")
-        self.webcam_canvas.image = self._latest_frame
+        self._process_test_image()
 
     # ─────────────────────────────────────────────────────────────
     #  Test Image Processing (face detection + Grad-CAM)
@@ -1304,23 +1555,11 @@ class EmotionGUI:
                     except Exception:
                         pass
 
-                # Draw bounding box
-                color = EMOTION_BGR.get(best_label, (0, 255, 0))
-                cv2.rectangle(
-                    display_frame, (x, y), (x + w, y + h), color, 2,
-                )
-                cv2.putText(
-                    display_frame, "Face detected",
-                    (x, y - 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (0, 255, 0), 1,
-                )
-                text = f"{best_label.upper()} -- {best_conf:.1%}"
-                cv2.putText(
-                    display_frame, text,
-                    (x, y + h + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                    color, 2,
+                # Draw stylized face overlay
+                self._draw_face_overlay(
+                    display_frame, x, y, w, h,
+                    best_label, best_conf,
+                    *WEBCAM_PREVIEW_SIZE,
                 )
 
         # Update preview
@@ -1397,16 +1636,27 @@ class EmotionGUI:
             self.cap = self._open_camera()
             if self.cap is None:
                 self.face_detector = None
-                messagebox.showerror(
-                    "Camera Error",
-                    "Webcam açılamadı.\n\n"
-                    "Kontrol edin:\n"
-                    "  • Kamera başka bir uygulama (Zoom, Teams, "
-                    "tarayıcı) tarafından kullanılıyor olabilir\n"
-                    "  • Windows Ayarlar → Gizlilik → Kamera "
-                    "izninin açık olduğundan emin olun\n"
-                    "  • Kamerayı çıkarıp tekrar takmayı deneyin",
-                )
+                if _platform.system() == "Darwin":
+                    _cam_hint = (
+                        "Webcam açılamadı.\n\n"
+                        "Kontrol edin:\n"
+                        "  • Kamera başka bir uygulama (FaceTime, Zoom, "
+                        "tarayıcı) tarafından kullanılıyor olabilir\n"
+                        "  • Sistem Ayarları → Gizlilik ve Güvenlik → "
+                        "Kamera → Terminal (veya bu uygulamayı) etkinleştirin\n"
+                        "  • Uygulamayı kapatıp tekrar açın"
+                    )
+                else:
+                    _cam_hint = (
+                        "Webcam açılamadı.\n\n"
+                        "Kontrol edin:\n"
+                        "  • Kamera başka bir uygulama (Zoom, Teams, "
+                        "tarayıcı) tarafından kullanılıyor olabilir\n"
+                        "  • Windows Ayarlar → Gizlilik → Kamera "
+                        "izninin açık olduğundan emin olun\n"
+                        "  • Kamerayı çıkarıp tekrar takmayı deneyin"
+                    )
+                messagebox.showerror("Camera Error", _cam_hint)
                 return
         else:
             self.cap = None
@@ -1422,10 +1672,15 @@ class EmotionGUI:
         )
         self._capture_thread.start()
 
-        # Start Spout receiver thread
+        # Start Spout/Syphon receiver thread
         if self._spout_available:
+            _loop = (
+                self._syphon_receive_loop
+                if self._spout_protocol == "syphon"
+                else self._spout_receive_loop
+            )
             self._spout_thread = threading.Thread(
-                target=self._spout_receive_loop, daemon=True,
+                target=_loop, daemon=True,
             )
             self._spout_thread.start()
 
@@ -1691,25 +1946,11 @@ class EmotionGUI:
                         else:
                             grad_cam_overlay = self._cached_gradcam
 
-                    # Draw bounding box on display frame
-                    color = EMOTION_BGR.get(best_label, (0, 255, 0))
-                    cv2.rectangle(
-                        display_frame, (x, y), (x + w, y + h), color, 2,
-                    )
-                    # "Face detected" label
-                    cv2.putText(
-                        display_frame, "Face detected",
-                        (x, y - 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                        (0, 255, 0), 1,
-                    )
-                    # Emotion label
-                    text = f"{best_label.upper()} -- {best_conf:.1%}"
-                    cv2.putText(
-                        display_frame, text,
-                        (x, y + h + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                        color, 2,
+                    # Draw stylized face overlay
+                    self._draw_face_overlay(
+                        display_frame, x, y, w, h,
+                        best_label, best_conf,
+                        *WEBCAM_PREVIEW_SIZE,
                     )
 
                     # Grad-CAM overlay — small thumbnail next to face
@@ -1790,6 +2031,36 @@ class EmotionGUI:
             remaining = FRAME_INTERVAL - elapsed
             if remaining > 0:
                 time.sleep(remaining)
+
+    def _draw_face_overlay(
+        self,
+        frame: np.ndarray,
+        x: int, y: int, w: int, h: int,
+        label: str, conf: float,
+        preview_w: int = 240, preview_h: int = 180,
+    ) -> None:
+        """Minimalist face overlay: thin rectangle + small floating label."""
+        fh, fw = frame.shape[:2]
+        sf = max(1.0, max(fw / preview_w, fh / preview_h))
+        color = EMOTION_BGR.get(label, (0, 255, 0))
+
+        # Thin rectangle (1px in preview space)
+        cv2.rectangle(frame, (x, y), (x + w, y + h), color, max(1, int(sf)))
+
+        # Small label above top-left corner
+        text = f"{label.upper()}  {conf:.0%}"
+        font_scale = max(0.32, 0.40 * sf)
+        thickness = max(1, int(sf))
+        (tw, th), _ = cv2.getTextSize(
+            text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
+        )
+        tx = x
+        ty = max(th + int(2 * sf), y - int(4 * sf))
+        cv2.putText(
+            frame, text, (tx, ty),
+            cv2.FONT_HERSHEY_SIMPLEX, font_scale,
+            color, thickness, cv2.LINE_AA,
+        )
 
     def _cv2_to_tk(
         self, frame: np.ndarray, w: int, h: int,
@@ -1875,9 +2146,10 @@ class EmotionGUI:
                 self.viz_emotion_label.place_forget()
                 self._viz_emotion_visible = False
 
-        # Update center panel with Spout frames (if available)
+        # Update center panel with Spout/Syphon frames (if available)
         if self._spout_available and self._latest_spout_frame is not None:
-            canvas_w, canvas_h = SPOUT_DISPLAY_SIZE
+            canvas_w = self.viz_canvas.winfo_width() or SPOUT_DISPLAY_SIZE[0]
+            canvas_h = self.viz_canvas.winfo_height() or SPOUT_DISPLAY_SIZE[1]
             self._spout_photo = self._spout_to_tk(
                 self._latest_spout_frame, canvas_w, canvas_h,
             )
@@ -1984,7 +2256,7 @@ class CalibrationWizard(tk.Toplevel):
         # Title
         tk.Label(
             self, text="User Calibration",
-            font=("Segoe UI", 18, "bold"),
+            font=(UI_FONT, 18, "bold"),
             bg=BG_COLOR, fg=HEADING_COLOR,
         ).pack(pady=(18, 4))
 
@@ -1992,7 +2264,7 @@ class CalibrationWizard(tk.Toplevel):
             self,
             text="You will be asked to show each emotion in turn.\n"
                  "Hold each expression for a few seconds.",
-            font=("Segoe UI", 10), bg=BG_COLOR, fg=TEXT_COLOR,
+            font=(UI_FONT, 10), bg=BG_COLOR, fg=TEXT_COLOR,
             justify="center",
         ).pack(pady=(0, 12))
 
@@ -2001,19 +2273,19 @@ class CalibrationWizard(tk.Toplevel):
         name_frame.pack(padx=30, fill=tk.X)
         tk.Label(
             name_frame, text="Your Name:",
-            font=("Segoe UI", 11), bg=BG_COLOR, fg=TEXT_COLOR,
+            font=(UI_FONT, 11), bg=BG_COLOR, fg=TEXT_COLOR,
         ).pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="user")
         self.name_entry = tk.Entry(
             name_frame, textvariable=self.name_var,
-            font=("Segoe UI", 11), width=20,
+            font=(UI_FONT, 11), width=20,
         )
         self.name_entry.pack(side=tk.LEFT, padx=(8, 0))
 
         # Emotion prompt (large)
         self.prompt_label = tk.Label(
             self, text="Press Start to begin",
-            font=("Segoe UI", 26, "bold"),
+            font=(UI_FONT, 26, "bold"),
             bg=BG_COLOR, fg="#FFD700",
         )
         self.prompt_label.pack(pady=(20, 4))
@@ -2021,7 +2293,7 @@ class CalibrationWizard(tk.Toplevel):
         # Hint text
         self.hint_label = tk.Label(
             self, text="",
-            font=("Segoe UI", 11, "italic"),
+            font=(UI_FONT, 11, "italic"),
             bg=BG_COLOR, fg="#AAAAAA",
         )
         self.hint_label.pack()
@@ -2029,7 +2301,7 @@ class CalibrationWizard(tk.Toplevel):
         # Countdown / status
         self.status_label = tk.Label(
             self, text="",
-            font=("Segoe UI", 14),
+            font=(UI_FONT, 14),
             bg=BG_COLOR, fg=TEXT_COLOR,
         )
         self.status_label.pack(pady=(12, 4))
@@ -2050,7 +2322,7 @@ class CalibrationWizard(tk.Toplevel):
 
         self.progress_text = tk.Label(
             self, text="0 / 5 emotions",
-            font=("Segoe UI", 10), bg=BG_COLOR, fg=TEXT_COLOR,
+            font=(UI_FONT, 10), bg=BG_COLOR, fg=TEXT_COLOR,
         )
         self.progress_text.pack()
 
@@ -2060,7 +2332,7 @@ class CalibrationWizard(tk.Toplevel):
 
         self.start_btn = tk.Button(
             btn_frame, text="Start",
-            font=("Segoe UI", 12, "bold"),
+            font=(UI_FONT, 12, "bold"),
             bg=BTN_START, fg="white",
             activebackground="#388E3C",
             relief=tk.FLAT, width=12,
@@ -2070,7 +2342,7 @@ class CalibrationWizard(tk.Toplevel):
 
         self.cancel_btn = tk.Button(
             btn_frame, text="Cancel",
-            font=("Segoe UI", 12),
+            font=(UI_FONT, 12),
             bg=BTN_STOP, fg="white",
             activebackground="#D32F2F",
             relief=tk.FLAT, width=12,
