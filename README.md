@@ -6,7 +6,9 @@ This repository implements an adaptive emotion recognition system that
 classifies facial expressions using deep learning. The training pipeline
 is model-agnostic and supports swapping model backbones through shared
 configuration. The project includes training, evaluation, single-image
-inference, Grad-CAM explainability, and real-time webcam prediction.
+inference, Grad-CAM explainability, real-time webcam prediction, and a
+full-screen GUI application with TouchDesigner integration, multi-model
+ensemble, and confidence calibration.
 
 ## Implemented Models
 
@@ -24,8 +26,11 @@ adaptive-emotion-aware-virtual-interaction-system/
 ├── config.py               # Model-agnostic configuration
 ├── train.py                # Training pipeline (CLI)
 ├── evaluate.py             # Model evaluation on test set (CLI)
-├── inference.py            # Single image inference (CLI)
+├── inference.py            # Single image inference with face detection (CLI)
 ├── webcam.py               # Real-time webcam inference (CLI)
+├── gui_app.py              # Full-screen GUI with TouchDesigner integration
+├── run.sh                  # Launch the GUI (activates venv automatically)
+├── setup.sh                # One-shot environment setup
 ├── requirements.txt        # Python dependencies
 │
 ├── data/
@@ -42,27 +47,55 @@ adaptive-emotion-aware-virtual-interaction-system/
 ├── utils/
 │   ├── __init__.py
 │   ├── visualization.py     # Training plots and confusion matrices
-│   └── grad_cam.py          # Grad-CAM explainability module
+│   ├── grad_cam.py          # Grad-CAM explainability module
+│   ├── calibration.py       # Temperature / confusion-matrix calibration
+│   └── ensemble.py          # Multi-model ensemble prediction
 │
 └── notebooks/
     ├── train_mini_xception.ipynb
     ├── train_efficientnet_B0.ipynb
     ├── train_resnet.ipynb
     ├── train_hsemotion.ipynb
-    ├── compare_models.ipynb    # Side-by-side model comparison
-    └── cross_dataset_evaluation.ipynb  # FERPlus → RAF-DB generalization
+    └── compare_models.ipynb    # Side-by-side model comparison
 ```
 
 ## Installation
+
+Run the setup script to create a virtual environment and install all
+dependencies (includes MPS support for Apple Silicon):
+
+```bash
+bash setup.sh
+```
+
+Or install manually:
 
 ```bash
 pip install -r requirements.txt
 ```
 
 **Dependencies:** PyTorch, torchvision, OpenCV, NumPy, Pillow,
-scikit-learn, matplotlib, tqdm, pandas, python-osc.
+scikit-learn, matplotlib, tqdm, pandas, python-osc, customtkinter, timm.
 
 ## Usage
+
+### GUI Application
+
+Launch the full-screen GUI with TouchDesigner integration:
+
+```bash
+bash run.sh
+```
+
+The GUI provides:
+- Real-time webcam emotion detection with Haar cascade face tracking
+- Multi-model selection with in-memory model caching for instant switching
+- Ensemble mode: combine predictions from multiple models simultaneously
+- Confidence calibration (temperature scaling / confusion-matrix correction)
+- Grad-CAM overlay (toggle from the control panel)
+- UDP output to TouchDesigner (configurable host/port)
+- Spout (Windows) / Syphon (macOS) frame sharing with TouchDesigner
+- Test image mode for offline inspection
 
 ### Training
 
@@ -75,7 +108,7 @@ python train.py \
     --epochs 50 \
     --batch-size 32 \
     --output-dir outputs \
-    --device cuda
+    --device mps        # cuda | mps | cpu
 ```
 
 Or use the Colab notebooks in `notebooks/` for GPU training.
@@ -86,21 +119,9 @@ Compare all four trained models side by side:
 
 Open `notebooks/compare_models.ipynb` in Colab. The notebook evaluates
 all models on the same FERPlus test split and produces accuracy tables,
-per-class F1 charts, confusion matrices, training history overlays,
-parameter efficiency analysis, prediction confidence distributions,
-and Phase 1 vs Phase 2 training impact comparison. It also integrates
-findings from real-world image validation notebooks. Outputs are saved
-to `results/model_comparison/`.
-
-### Cross-Dataset Evaluation
-
-Test how well FERPlus-trained models generalize to real-world data:
-
-Open `notebooks/cross_dataset_evaluation.ipynb` in Colab. The notebook
-evaluates all four models on the RAF-DB test set and compares with
-FERPlus baselines to measure domain gap, per-class transfer, and
-confidence calibration. Outputs are saved to
-`results/cross_dataset_evaluation/`.
+per-class F1 charts, confusion matrices, training history overlays, and
+a parameter efficiency analysis. Outputs are saved to
+`results/model_comparison/`.
 
 ### Evaluation
 
@@ -116,7 +137,8 @@ python evaluate.py \
 
 ### Single Image Inference
 
-Predict emotion from a single face image:
+Predict emotion from a single image. The pipeline automatically detects
+and crops the largest face before running the model:
 
 ```bash
 python inference.py \
@@ -156,11 +178,17 @@ python webcam.py \
 
 Options:
 - `--camera <index>` to select a specific camera device (default: 0).
-- `--device cuda` to use GPU acceleration.
+- `--device mps` for Apple Silicon, `--device cuda` for NVIDIA GPU.
 - Press `q` to quit the webcam window.
 
 The webcam pipeline uses OpenCV's Haar cascade for face detection and
 runs the trained model on each detected face in real time.
+
+## Device Support
+
+All CLI tools and the GUI auto-detect the best available device:
+`cuda` → `mps` (Apple Silicon) → `cpu`. Pass `--device <name>` to
+override.
 
 ## Dataset
 
