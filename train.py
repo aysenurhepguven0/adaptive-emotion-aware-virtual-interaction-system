@@ -114,7 +114,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=TRAINING_CONFIG["epochs"])
     parser.add_argument("--batch-size", type=int, default=TRAINING_CONFIG["batch_size"])
     parser.add_argument("--output-dir", default="outputs", help="Directory to save artifacts.")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    _default_device = ("cuda" if torch.cuda.is_available()
+                       else "mps" if torch.backends.mps.is_available()
+                       else "cpu")
+    parser.add_argument("--device", default=_default_device)
     return parser.parse_args()
 
 

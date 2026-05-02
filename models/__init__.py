@@ -173,9 +173,12 @@ def load_model_from_checkpoint(
         Tuple of (model in eval mode, class_names tuple).
     """
     if device is None:
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
 
     checkpoint = torch.load(
         checkpoint_path, map_location=device, weights_only=False

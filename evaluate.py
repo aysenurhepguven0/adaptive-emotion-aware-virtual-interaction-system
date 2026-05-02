@@ -77,7 +77,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Dataset name override.")
     parser.add_argument("--data-root", default=None, help="Override dataset root path.")
     parser.add_argument("--output-dir", default="outputs", help="Directory to save artifacts.")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    _default_device = ("cuda" if torch.cuda.is_available()
+                       else "mps" if torch.backends.mps.is_available()
+                       else "cpu")
+    parser.add_argument("--device", default=_default_device)
     return parser.parse_args()
 
 

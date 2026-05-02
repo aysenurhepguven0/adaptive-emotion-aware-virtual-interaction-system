@@ -312,9 +312,12 @@ def run_webcam(
         grayscale: Convert frames to grayscale before inference.
     """
     if device is None:
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
 
     # Load model and preprocessing pipeline
     print(f"Loading model: {model_name}")
@@ -470,11 +473,14 @@ def main() -> None:
     """CLI entry point for webcam emotion recognition."""
     args = parse_args()
 
-    device = torch.device(
-        args.device
-        if args.device
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    if args.device:
+        device = torch.device(args.device)
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     # Resolve defaults from dataset, then allow CLI overrides
     if args.dataset:
