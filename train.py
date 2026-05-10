@@ -84,7 +84,8 @@ def train_model(
 
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
-    for _ in range(epochs):
+    print(f"Training {model_name} on {resolved_dataset} | classes={class_names} | device={device}")
+    for epoch in range(1, epochs + 1):
         train_loss, train_acc = run_epoch(
             model, loaders["train"], criterion, optimizer, device
         )
@@ -95,9 +96,14 @@ def train_model(
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
 
+        print(f"Epoch {epoch}/{epochs}  "
+              f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+              f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
+
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / f"{model_name}_{resolved_dataset}.pt"
     torch.save({"model_state": model.state_dict(), "classes": class_names}, checkpoint_path)
+    print(f"Checkpoint saved → {checkpoint_path}")
 
     history_path = output_dir / "training_history.json"
     history_path.write_text(json.dumps(history, indent=2))
