@@ -7,17 +7,11 @@ from typing import Dict
 
 import torch
 from torch import nn
+from sklearn.metrics import classification_report
 
 from data import create_dataloaders
+from models import load_model_from_checkpoint, get_model_config
 from utils import plot_confusion_matrix
-
-
-def get_model(model_name: str, num_classes: int) -> nn.Module:
-    try:
-        from models import get_model as model_factory
-    except ImportError as exc:
-        raise ImportError("Model definitions are not available yet.") from exc
-    return model_factory(model_name, num_classes=num_classes)
 
 
 def evaluate(
@@ -28,12 +22,14 @@ def evaluate(
     device: torch.device,
     output_dir: Path,
 ) -> Dict[str, float]:
+    model_cfg = get_model_config(model_name)
     loaders, class_names, resolved_dataset = create_dataloaders(
-        dataset_name=dataset_name, data_root=data_root
+        dataset_name=dataset_name, data_root=data_root,
+        input_size=model_cfg["input_size"],
     )
-    model = get_model(model_name, num_classes=len(class_names)).to(device)
-    checkpoint_data = torch.load(checkpoint, map_location=device)
-    model.load_state_dict(checkpoint_data["model_state"])
+    model, class_names = load_model_from_checkpoint(
+        model_name, checkpoint, device, class_names=class_names
+    )
     model.eval()
 
     y_true = []
@@ -53,8 +49,20 @@ def evaluate(
             total_samples += labels.size(0)
 
     accuracy = total_correct / max(total_samples, 1)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
 
+    print(f"\n=== Evaluation: {model_name} ({resolved_dataset}) ===")
+    print(f"Overall Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    print("\nPer-class F1 scores:")
+    for cls in class_names:
+        f1 = report[cls]["f1-score"]
+        prec = report[cls]["precision"]
+        rec = report[cls]["recall"]
+        print(f"  {cls:<12} precision={prec:.3f}  recall={rec:.3f}  f1={f1:.3f}")
+    print(f"\nMacro F1:    {report['macro avg']['f1-score']:.4f}")
+    print(f"Weighted F1: {report['weighted avg']['f1-score']:.4f}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
     plot_confusion_matrix(
         y_true,
         y_pred,
@@ -63,8 +71,14 @@ def evaluate(
         normalize=True,
         title=f"{model_name} ({resolved_dataset})",
     )
+    print(f"\nConfusion matrix saved → {output_dir / 'confusion_matrix.png'}")
 
-    metrics = {"accuracy": accuracy}
+    metrics = {
+        "accuracy": accuracy,
+        "macro_f1": report["macro avg"]["f1-score"],
+        "weighted_f1": report["weighted avg"]["f1-score"],
+        "per_class_f1": {cls: report[cls]["f1-score"] for cls in class_names},
+    }
     metrics_path = output_dir / "evaluation_metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2))
     return metrics
