@@ -80,37 +80,59 @@ def _validate_splits() -> Tuple[float, float, float]:
     return train_split, val_split, test_split
 
 
+def _is_presplit(dataset_root: Path) -> bool:
+    """Return True if the directory contains train/val/test subdirs (pre-split layout)."""
+    split_names = {"train", "val", "validation", "test"}
+    subdirs = {p.name.lower() for p in dataset_root.iterdir() if p.is_dir()}
+    return bool(subdirs & split_names)
+
+
 def load_datasets(
     dataset_name: str | None = None,
     data_root: str | None = None,
     seed: int = 42,
+    input_size: int | None = None,
 ) -> DatasetBundle:
-    train_split, val_split, test_split = _validate_splits()
     name, dataset_root, metadata = resolve_dataset(dataset_name, data_root)
+    transform_set = build_transforms(input_size or metadata["input_size"], metadata["grayscale"])
 
-    base_dataset = datasets.ImageFolder(dataset_root)
+    if _is_presplit(dataset_root):
+        val_dir = dataset_root / "val" if (dataset_root / "val").exists() else dataset_root / "validation"
+        train_dataset = datasets.ImageFolder(str(dataset_root / "train"), transform=transform_set["train"])
+        val_dataset   = datasets.ImageFolder(str(val_dir),                transform=transform_set["eval"])
+        test_dataset  = datasets.ImageFolder(str(dataset_root / "test"),  transform=transform_set["eval"])
+        if len(train_dataset) == 0:
+            raise ValueError("No samples found in train split")
+        return DatasetBundle(
+            train=Subset(train_dataset, list(range(len(train_dataset)))),
+            val=Subset(val_dataset,     list(range(len(val_dataset)))),
+            test=Subset(test_dataset,   list(range(len(test_dataset)))),
+            class_names=tuple(train_dataset.classes),
+            dataset_name=name,
+        )
+
+    train_split, val_split, _ = _validate_splits()
+    base_dataset = datasets.ImageFolder(str(dataset_root))
     if len(base_dataset) == 0:
         raise ValueError("No samples found for the selected dataset")
 
-    transform_set = build_transforms(metadata["input_size"], metadata["grayscale"])
     total_samples = len(base_dataset)
     num_train = int(total_samples * train_split)
-    num_val = int(total_samples * val_split)
-    num_test = total_samples - num_train - num_val
+    num_val   = int(total_samples * val_split)
 
     generator = torch.Generator().manual_seed(seed)
     indices = torch.randperm(total_samples, generator=generator).tolist()
     train_indices = indices[:num_train]
-    val_indices = indices[num_train : num_train + num_val]
-    test_indices = indices[num_train + num_val :]
+    val_indices   = indices[num_train : num_train + num_val]
+    test_indices  = indices[num_train + num_val :]
 
-    train_dataset = datasets.ImageFolder(dataset_root, transform=transform_set["train"])
-    eval_dataset = datasets.ImageFolder(dataset_root, transform=transform_set["eval"])
+    train_dataset = datasets.ImageFolder(str(dataset_root), transform=transform_set["train"])
+    eval_dataset  = datasets.ImageFolder(str(dataset_root), transform=transform_set["eval"])
 
     return DatasetBundle(
         train=Subset(train_dataset, train_indices),
-        val=Subset(eval_dataset, val_indices),
-        test=Subset(eval_dataset, test_indices),
+        val=Subset(eval_dataset,   val_indices),
+        test=Subset(eval_dataset,  test_indices),
         class_names=tuple(base_dataset.classes),
         dataset_name=name,
     )
@@ -123,8 +145,11 @@ def create_dataloaders(
     num_workers: int = 0,
     seed: int = 42,
     pin_memory: bool = False,
+    input_size: int | None = None,
 ) -> Tuple[Dict[str, DataLoader], Tuple[str, ...], str]:
-    datasets_bundle = load_datasets(dataset_name=dataset_name, data_root=data_root, seed=seed)
+    datasets_bundle = load_datasets(
+        dataset_name=dataset_name, data_root=data_root, seed=seed, input_size=input_size
+    )
     effective_batch_size = batch_size or TRAINING_CONFIG["batch_size"]
 
     loaders = {
