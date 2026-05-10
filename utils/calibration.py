@@ -140,15 +140,19 @@ class CalibrationManager:
 
         # Compute correction matrix
         cond = np.linalg.cond(C)
+        print(f"[CALIBRATION] Confusion matrix condition number: {cond:.2f} "
+              f"(threshold={CONDITION_NUMBER_THRESHOLD})")
         if cond < CONDITION_NUMBER_THRESHOLD:
             correction = np.linalg.pinv(C)
             method = "pinv"
+            print("[CALIBRATION] Correction method: pseudo-inverse (pinv)")
         else:
             # Fallback: diagonal scaling
             diag = np.diag(C).copy()
             diag[diag < 1e-6] = 1e-6  # avoid division by zero
             correction = np.diag(1.0 / diag)
             method = "diagonal"
+            print("[CALIBRATION] Correction method: diagonal scaling (fallback)")
 
         profile = CalibrationProfile(
             user_name=self._session_user,
