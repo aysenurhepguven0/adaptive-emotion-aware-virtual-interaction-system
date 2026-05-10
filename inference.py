@@ -61,7 +61,10 @@ def predict_image(
     # Use the model's expected input size (e.g. 224 for ResNet-18),
     # not the dataset's native size (48 for FERPlus) — they differ.
     transform = build_transforms(model_cfg["input_size"], metadata["grayscale"])["eval"]
-    image = Image.open(image_path).convert("RGB")
+    try:
+        image = Image.open(image_path).convert("RGB")
+    except Exception as e:
+        raise ValueError(f"Cannot load image '{image_path}': {e}") from e
     image = _crop_face(image)
     tensor = transform(image).unsqueeze(0).to(device)
 
@@ -88,13 +91,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    label, confidence = predict_image(
-        model_name=args.model,
-        checkpoint_path=Path(args.checkpoint),
-        image_path=Path(args.image),
-        dataset_name=args.dataset,
-        device=torch.device(args.device),
-    )
+    try:
+        label, confidence = predict_image(
+            model_name=args.model,
+            checkpoint_path=Path(args.checkpoint),
+            image_path=Path(args.image),
+            dataset_name=args.dataset,
+            device=torch.device(args.device),
+        )
+    except (FileNotFoundError, ValueError, RuntimeError, Exception) as e:
+        print(f"[ERROR] {type(e).__name__}: {e}")
+        raise SystemExit(1)
     print(f"Prediction: {label} ({confidence:.2%})")
 
 
