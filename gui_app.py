@@ -382,6 +382,135 @@ class EmotionGUI:
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Show welcome / quick-start tutorial on first launch
+        self.root.after(600, self._show_welcome_dialog)
+
+    # ─────────────────────────────────────────────────────────────
+    #  Welcome / Quick-Start Tutorial
+    # ─────────────────────────────────────────────────────────────
+    _WELCOME_FLAG = Path.home() / ".emotion_gui_welcome_shown"
+
+    def _show_welcome_dialog(self) -> None:
+        if self._WELCOME_FLAG.exists():
+            return
+        self._build_welcome_window()
+
+    def _build_welcome_window(self) -> None:
+        win = tk.Toplevel(self.root)
+        win.title("Quick Start — How to Use")
+        win.resizable(False, False)
+        win.configure(bg="#1A1A1A")
+        win.grab_set()
+
+        # Centre on parent
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width() // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        win.geometry(f"520x530+{px - 260}+{py - 265}")
+
+        TITLE_FG = "#E6B800"
+        BODY_FG  = "#DDDDDD"
+        STEP_FG  = "#AAAAAA"
+        BG       = "#1A1A1A"
+
+        tk.Label(
+            win, text="Welcome — Adaptive Emotion Visualization",
+            font=(UI_FONT, 14, "bold"), bg=BG, fg=TITLE_FG,
+            wraplength=480,
+        ).pack(pady=(22, 4), padx=20)
+
+        tk.Label(
+            win,
+            text="This app recognises facial expressions in real time and "
+                 "drives the TouchDesigner visualisation. Follow the steps below:",
+            font=(UI_FONT, 10), bg=BG, fg=BODY_FG,
+            wraplength=480, justify="left",
+        ).pack(padx=24, pady=(0, 12), anchor="w")
+
+        steps = [
+            ("1", "Select a Model",
+             "Choose a model from the dropdown at the top of the left panel.\n"
+             "(Default: ResNet-18 — recommended starting point)"),
+            ("2", "Press START  →  Webcam opens",
+             "Click the green START button at the bottom-left.\n"
+             "The camera opens and a live preview appears in the panel above it."),
+            ("3", "Face the camera",
+             "Sit ~50 cm away, look straight ahead — good lighting gives best results."),
+            ("4", "Watch the emotion labels",
+             "The right panel shows the detected emotion and confidence score.\n"
+             "The centre panel reacts visually if TouchDesigner is connected."),
+            ("5", "Test with a saved image  (optional)",
+             "Tick 'Use test image', click Load and pick any photo from disk.\n"
+             "Press START — the model runs on the image instead of the webcam."),
+            ("6", "Press STOP when done",
+             "Click the red STOP button to close the camera and end the session."),
+        ]
+
+        for num, title, body in steps:
+            row = tk.Frame(win, bg=BG)
+            row.pack(padx=22, pady=3, fill=tk.X, anchor="w")
+
+            tk.Label(
+                row, text=num, width=2,
+                font=(UI_FONT, 11, "bold"), bg="#E6B800", fg="#000000",
+            ).pack(side=tk.LEFT, anchor="n", padx=(0, 10), pady=2)
+
+            col = tk.Frame(row, bg=BG)
+            col.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            tk.Label(
+                col, text=title,
+                font=(UI_FONT, 11, "bold"), bg=BG, fg=BODY_FG,
+                anchor="w",
+            ).pack(anchor="w")
+            tk.Label(
+                col, text=body,
+                font=(UI_FONT, 9), bg=BG, fg=STEP_FG,
+                anchor="w", justify="left", wraplength=390,
+            ).pack(anchor="w")
+
+        tk.Frame(win, bg="#333333", height=1).pack(fill=tk.X, padx=20, pady=(12, 0))
+
+        bottom = tk.Frame(win, bg=BG)
+        bottom.pack(fill=tk.X, padx=20, pady=10)
+
+        dont_show_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            bottom, text="Don't show again",
+            variable=dont_show_var,
+            bg=BG, fg=STEP_FG, selectcolor="#333333",
+            activebackground=BG, activeforeground=STEP_FG,
+            font=(UI_FONT, 10),
+        ).pack(side=tk.LEFT)
+
+        def _close():
+            if dont_show_var.get():
+                self._WELCOME_FLAG.touch()
+            win.destroy()
+
+        def _tour():
+            _close()
+            self.root.after(200, lambda: TutorialOverlay(self))
+
+        ctk.CTkButton(
+            bottom, text="Take a Tour →",
+            font=(UI_FONT, 11),
+            fg_color="#2A4080", hover_color="#3A50A0",
+            text_color="white", corner_radius=6, height=32, width=130,
+            command=_tour,
+        ).pack(side=tk.RIGHT, padx=(6, 0))
+
+        ctk.CTkButton(
+            bottom, text="Got it, Let's Start!",
+            font=(UI_FONT, 12, "bold"),
+            fg_color=BTN_START, hover_color=BTN_START_HOVER,
+            text_color="white", corner_radius=6, height=32, width=160,
+            command=_close,
+        ).pack(side=tk.RIGHT)
+
+        win.bind("<Return>", lambda _e: _close())
+        win.bind("<Escape>", lambda _e: _close())
+
     # ─────────────────────────────────────────────────────────────
     #  Optional: Spout Receiver for TouchDesigner
     # ─────────────────────────────────────────────────────────────
@@ -526,14 +655,6 @@ class EmotionGUI:
         title_frame = tk.Frame(self.root, bg="#252526", pady=0)
         title_frame.pack(side=tk.TOP, fill=tk.X)
         tk.Frame(title_frame, bg="#007ACC", height=3).pack(fill=tk.X)
-        tk.Label(
-            title_frame,
-            text="TouchDesigner Interface \u2014 "
-                 "Adaptive Emotion Visualization",
-            font=(UI_FONT, 14, "bold"),
-            bg="#252526", fg="#CCCCCC",
-            pady=8,
-        ).pack()
 
     def _build_panels(self) -> None:
         print("[GUI]   _build_panels: creating container frame")
@@ -773,6 +894,12 @@ class EmotionGUI:
         # Webcam Preview
         print("[GUI]     _build_control_panel: Webcam Preview heading...")
         self._heading(panel, "Webcam Preview")
+        tk.Label(
+            panel,
+            text="▶  Press START to open the camera",
+            font=(UI_FONT, 9, "italic"),
+            bg=PANEL_BG, fg="#888888",
+        ).pack(anchor="w", padx=15, pady=(0, 4))
         webcam_frame = tk.Frame(
             panel,
             bg="#1A1A1A",
@@ -811,7 +938,7 @@ class EmotionGUI:
         )
         test_toggle.pack(side=tk.LEFT)
 
-        test_btn = ctk.CTkButton(
+        self.load_image_btn = ctk.CTkButton(
             test_frame, text="Load",
             font=(UI_FONT, 11),
             fg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER,
@@ -819,11 +946,11 @@ class EmotionGUI:
             width=70, height=28,
             command=self._load_test_image,
         )
-        test_btn.pack(side=tk.RIGHT)
+        self.load_image_btn.pack(side=tk.RIGHT)
 
         # START / STOP
         btn_frame = tk.Frame(panel, bg=PANEL_BG)
-        btn_frame.pack(padx=15, pady=(5, 15), fill=tk.X)
+        btn_frame.pack(padx=15, pady=(5, 4), fill=tk.X)
 
         self.start_btn = ctk.CTkButton(
             btn_frame, text="START",
@@ -842,6 +969,7 @@ class EmotionGUI:
             command=self._stop, state=tk.DISABLED,
         )
         self.stop_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
+
         print("[GUI]     _build_control_panel: START/STOP buttons packed — DONE")
 
     # ── CENTER: Visualization ────────────────────────────────────
@@ -1041,6 +1169,15 @@ class EmotionGUI:
             anchor="w",
         )
         self.device_label.pack(fill=tk.X, pady=(8, 0))
+
+        # "? How to use" — bottom-right of monitoring panel
+        tk.Button(
+            panel, text="?  How to use",
+            font=(UI_FONT, 9), bg=PANEL_BG, fg="#666666",
+            relief=tk.FLAT, cursor="hand2", bd=0,
+            activebackground=PANEL_BG, activeforeground="#AAAAAA",
+            command=self._build_welcome_window,
+        ).pack(side=tk.BOTTOM, anchor="e", padx=12, pady=(0, 8))
         print("[GUI]     _build_monitoring_panel: performance labels packed — DONE")
 
     # ── UI helpers ───────────────────────────────────────────────
@@ -1318,10 +1455,18 @@ class EmotionGUI:
 
     def _open_calibration_wizard(self) -> None:
         if not self.running:
-            print("[WARNING] Start the webcam before calibrating.")
-            return
+            self._start()
+            if not self.running:
+                messagebox.showerror(
+                    "Camera Error",
+                    "Could not start the camera. Please check your camera and try again.",
+                )
+                return
         if self.model is None:
-            print("[WARNING] Load a model before calibrating.")
+            messagebox.showwarning(
+                "Model Required",
+                "Please select a model before calibrating.",
+            )
             return
         CalibrationWizard(self)
 
@@ -1571,8 +1716,8 @@ class EmotionGUI:
 
         # Update monitoring panel
         self.current_probs = probs_dict
-        self.dominant_emotion = best_label
-        self.dominant_confidence = best_conf
+        self.dominant_emotion = best_label if best_conf >= self.sensitivity else ""
+        self.dominant_confidence = best_conf if best_conf >= self.sensitivity else 0.0
 
         for emotion, widgets in self.prob_bars.items():
             prob = probs_dict.get(emotion, 0.0)
@@ -1580,10 +1725,10 @@ class EmotionGUI:
             widgets["pct"].configure(text=f"{pct:.0f}%")
             widgets["fill"].place_configure(relwidth=prob)
 
-        if best_label:
-            color_hex = EMOTION_HEX.get(best_label, "#FFFFFF")
+        if self.dominant_emotion:
+            color_hex = EMOTION_HEX.get(self.dominant_emotion, "#FFFFFF")
             self.dominant_label.configure(
-                text=f"{best_label.upper()} ({best_conf:.1%})",
+                text=f"{self.dominant_emotion.upper()} ({self.dominant_confidence:.1%})",
                 fg=color_hex,
             )
         else:
@@ -2002,6 +2147,12 @@ class EmotionGUI:
                             self.udp_status = "Error"
                         self._last_udp_send = now
 
+            else:
+                now = time.time()
+                if now - self._last_udp_send >= SEND_INTERVAL:
+                    self._send_udp_reset()
+                    self._last_udp_send = now
+
             # FPS / latency
             t1 = time.time()
             self.current_latency_ms = (t1 - t0) * 1000
@@ -2010,8 +2161,8 @@ class EmotionGUI:
 
             # Store data for GUI thread
             self.current_probs = probs_dict
-            self.dominant_emotion = best_label
-            self.dominant_confidence = best_conf
+            self.dominant_emotion = best_label if best_conf >= self.sensitivity else ""
+            self.dominant_confidence = best_conf if best_conf >= self.sensitivity else 0.0
 
             # Convert frame for tkinter
             preview_w, preview_h = WEBCAM_PREVIEW_SIZE
@@ -2211,16 +2362,266 @@ class EmotionGUI:
 
 
 # ═════════════════════════════════════════════════════════════════
-#  Entry Point
+#  Interactive Tutorial Overlay
+# ═════════════════════════════════════════════════════════════════
+class TutorialOverlay:
+    """Step-by-step arrow tour that highlights key GUI widgets.
+
+    Shows a dim overlay over the main window with a dashed spotlight
+    border around each target widget, plus a callout box with navigation.
+    Launch via: TutorialOverlay(gui_instance)
+    """
+
+    STEPS = [
+        dict(
+            attr="model_menu",
+            side="below",
+            title="Step 1 — Select a Model",
+            body=(
+                "Pick a model from this dropdown.\n"
+                "ResNet-18 is recommended for first-time use.\n"
+                "It loads automatically on selection."
+            ),
+        ),
+        dict(
+            attr="start_btn",
+            side="above",
+            title="Step 2 — Start the Webcam",
+            body=(
+                "Click the green START button.\n"
+                "The built-in camera opens and a live\n"
+                "preview appears in the panel above."
+            ),
+        ),
+        dict(
+            attr="webcam_canvas",
+            side="right",
+            title="Step 3 — Live Preview",
+            body=(
+                "Your face appears here once the\n"
+                "webcam is running.\n"
+                "Aim for ~50 cm distance, good lighting."
+            ),
+        ),
+        dict(
+            attr="dominant_label",
+            side="left",
+            title="Step 4 — Emotion Output",
+            body=(
+                "The detected emotion and confidence\n"
+                "score appear here in real time.\n"
+                "The bar chart above shows all emotions."
+            ),
+        ),
+        dict(
+            attr="load_image_btn",
+            side="above",
+            title="Step 5 — Test with an Image",
+            body=(
+                "Tick 'Use test image' then click Load\n"
+                "to pick a photo from disk.\n"
+                "Press START — the model runs on the image\n"
+                "instead of the live webcam."
+            ),
+        ),
+    ]
+
+    _CW  = 268   # callout width
+    _CH  = 158   # callout height
+    _GAP = 14    # px gap between widget edge and callout
+
+    def __init__(self, gui: "EmotionGUI") -> None:
+        self._gui = gui
+        self._step = 0
+        self._overlay: Optional[tk.Toplevel] = None
+        self._callout: Optional[tk.Toplevel] = None
+        self._ov_canvas: Optional[tk.Canvas] = None
+        self._build_overlay()
+        self._render()
+
+    # ── dim overlay (covers full main window) ────────────────────
+    def _build_overlay(self) -> None:
+        root = self._gui.root
+        root.update_idletasks()
+        self._overlay = tk.Toplevel(root)
+        self._overlay.overrideredirect(True)
+        self._overlay.wm_attributes("-topmost", True)
+        self._overlay.wm_attributes("-alpha", 0.52)
+        self._overlay.configure(bg="#000000")
+        self._overlay.geometry(
+            f"{root.winfo_width()}x{root.winfo_height()}"
+            f"+{root.winfo_rootx()}+{root.winfo_rooty()}"
+        )
+        self._ov_canvas = tk.Canvas(
+            self._overlay, bg="#000000",
+            highlightthickness=0, cursor="arrow",
+        )
+        self._ov_canvas.pack(fill=tk.BOTH, expand=True)
+
+    # ── render current step ──────────────────────────────────────
+    def _render(self) -> None:
+        step = self.STEPS[self._step]
+        root  = self._gui.root
+        target = getattr(self._gui, step["attr"])
+
+        root.update_idletasks()
+        target.update_idletasks()
+
+        tx = target.winfo_rootx()
+        ty = target.winfo_rooty()
+        tw = max(target.winfo_width(), 1)
+        th = max(target.winfo_height(), 1)
+
+        ox = self._overlay.winfo_rootx()
+        oy = self._overlay.winfo_rooty()
+        lx, ly = tx - ox, ty - oy
+
+        c = self._ov_canvas
+        c.delete("all")
+
+        # Dashed spotlight border around target
+        pad = 7
+        c.create_rectangle(
+            lx - pad, ly - pad,
+            lx + tw + pad, ly + th + pad,
+            outline="#E6B800", width=3, dash=(10, 5),
+        )
+
+        # Numbered badge at top-left corner of spotlight
+        bx, by = lx - pad, ly - pad
+        r = 13
+        c.create_oval(bx - r, by - r, bx + r, by + r,
+                      fill="#E6B800", outline="")
+        c.create_text(bx, by, text=str(self._step + 1),
+                      font=(UI_FONT, 10, "bold"), fill="#000000")
+
+        self._place_callout(step, tx, ty, tw, th)
+
+    # ── callout box ──────────────────────────────────────────────
+    def _place_callout(self, step, tx, ty, tw, th) -> None:
+        if self._callout and self._callout.winfo_exists():
+            self._callout.destroy()
+
+        side = step["side"]
+        cw, ch, gap = self._CW, self._CH, self._GAP
+        n = len(self.STEPS)
+        is_last = self._step == n - 1
+
+        if side == "right":
+            win_x = tx + tw + gap
+            win_y = ty + th // 2 - ch // 2
+        elif side == "left":
+            win_x = tx - cw - gap
+            win_y = ty + th // 2 - ch // 2
+        elif side == "below":
+            win_x = tx + tw // 2 - cw // 2
+            win_y = ty + th + gap
+        else:  # above
+            win_x = tx + tw // 2 - cw // 2
+            win_y = ty - ch - gap
+
+        sw = self._gui.root.winfo_screenwidth()
+        sh = self._gui.root.winfo_screenheight()
+        win_x = max(4, min(win_x, sw - cw - 4))
+        win_y = max(4, min(win_y, sh - ch - 4))
+
+        win = tk.Toplevel(self._gui.root)
+        win.overrideredirect(True)
+        win.wm_attributes("-topmost", True)
+        win.geometry(f"{cw}x{ch}+{win_x}+{win_y}")
+        win.configure(bg="#1C1C1C")
+        self._callout = win
+
+        # Arrow indicator pointing toward the target widget
+        ARROW = {"right": " ←", "left": " →", "below": " ↑", "above": " ↓"}
+
+        c = tk.Canvas(win, width=cw, height=ch,
+                      bg="#1C1C1C", highlightthickness=0)
+        c.pack(fill=tk.BOTH, expand=True)
+
+        c.create_rectangle(1, 1, cw - 1, ch - 1, outline="#E6B800", width=2)
+
+        # Title with directional arrow
+        c.create_text(
+            cw // 2, 22,
+            text=step["title"] + ARROW.get(side, ""),
+            font=(UI_FONT, 11, "bold"), fill="#E6B800",
+            anchor="center", width=cw - 20,
+        )
+
+        # Horizontal divider
+        c.create_line(16, 38, cw - 16, 38, fill="#333333")
+
+        # Body text
+        c.create_text(
+            cw // 2, 78,
+            text=step["body"],
+            font=(UI_FONT, 10), fill="#CCCCCC",
+            anchor="center", width=cw - 24, justify="center",
+        )
+
+        # Step counter
+        btn_y = ch - 30
+        c.create_text(
+            cw // 2, btn_y + 11,
+            text=f"{self._step + 1} / {n}",
+            font=(UI_FONT, 9), fill="#555555", anchor="center",
+        )
+
+        # Skip button
+        ctk.CTkButton(
+            win, text="Skip",
+            font=(UI_FONT, 10),
+            fg_color="#262626", hover_color="#363636",
+            text_color="#777777", corner_radius=4, height=22, width=48,
+            command=self.close,
+        ).place(x=8, y=btn_y)
+
+        # Back button (not on first step)
+        if self._step > 0:
+            ctk.CTkButton(
+                win, text="← Back",
+                font=(UI_FONT, 10),
+                fg_color="#262626", hover_color="#363636",
+                text_color="#AAAAAA", corner_radius=4, height=22, width=62,
+                command=self._prev,
+            ).place(x=cw - 136, y=btn_y)
+
+        # Next / Finish button
+        ctk.CTkButton(
+            win,
+            text="Finish ✓" if is_last else "Next →",
+            font=(UI_FONT, 10, "bold"),
+            fg_color=BTN_START if is_last else "#1A3A70",
+            hover_color=BTN_START_HOVER if is_last else "#2A4A90",
+            text_color="white", corner_radius=4, height=22, width=68,
+            command=self.close if is_last else self._next,
+        ).place(x=cw - 76, y=btn_y)
+
+    def _next(self) -> None:
+        self._step += 1
+        self._render()
+
+    def _prev(self) -> None:
+        self._step -= 1
+        self._render()
+
+    def close(self) -> None:
+        for w in (self._callout, self._overlay):
+            if w and w.winfo_exists():
+                w.destroy()
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Calibration Wizard
 # ═════════════════════════════════════════════════════════════════
 class CalibrationWizard(tk.Toplevel):
     """Modal dialog that guides the user through per-emotion calibration."""
 
-    PREP_SECONDS = 3     # countdown before recording each emotion
-    RECORD_SECONDS = 3   # seconds to record frames for each emotion
-    TICK_MS = 100        # timer resolution
+    PREP_SECONDS = 3
+    RECORD_SECONDS = 3
+    TICK_MS = 100
 
-    # Friendly labels and hints shown to the user for each emotion
     EMOTION_HINTS: Dict[str, str] = {
         "angry":    "Frown, clench your jaw",
         "happy":    "Smile naturally",
@@ -2229,6 +2630,7 @@ class CalibrationWizard(tk.Toplevel):
         "surprise": "Raise eyebrows, open mouth",
     }
 
+
     def __init__(self, parent: EmotionGUI) -> None:
         super().__init__(parent.root)
         self.parent = parent
@@ -2236,7 +2638,7 @@ class CalibrationWizard(tk.Toplevel):
 
         self.title("Emotion Calibration")
         self.configure(bg=BG_COLOR)
-        self.geometry("520x480")
+        self.geometry("560x560")
         self.resizable(False, False)
         self.transient(parent.root)
         self.grab_set()
@@ -2253,102 +2655,151 @@ class CalibrationWizard(tk.Toplevel):
     # ── UI ───────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        # Title
+        # ── Header ───────────────────────────────────────────────
         tk.Label(
-            self, text="User Calibration",
-            font=(UI_FONT, 18, "bold"),
+            self, text="Emotion Calibration",
+            font=(UI_FONT, 17, "bold"),
             bg=BG_COLOR, fg=HEADING_COLOR,
-        ).pack(pady=(18, 4))
+        ).pack(pady=(20, 2))
 
         tk.Label(
             self,
-            text="You will be asked to show each emotion in turn.\n"
-                 "Hold each expression for a few seconds.",
-            font=(UI_FONT, 10), bg=BG_COLOR, fg=TEXT_COLOR,
-            justify="center",
-        ).pack(pady=(0, 12))
+            text="Show each expression and hold it for a few seconds.",
+            font=(UI_FONT, 10), bg=BG_COLOR, fg="#888888",
+        ).pack()
 
-        # User name
+        # ── Name input ───────────────────────────────────────────
         name_frame = tk.Frame(self, bg=BG_COLOR)
-        name_frame.pack(padx=30, fill=tk.X)
+        name_frame.pack(pady=(14, 0))
         tk.Label(
-            name_frame, text="Your Name:",
-            font=(UI_FONT, 11), bg=BG_COLOR, fg=TEXT_COLOR,
+            name_frame, text="Your name:",
+            font=(UI_FONT, 10), bg=BG_COLOR, fg=TEXT_COLOR,
         ).pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="user")
-        self.name_entry = tk.Entry(
+        self.name_entry = ctk.CTkEntry(
             name_frame, textvariable=self.name_var,
-            font=(UI_FONT, 11), width=20,
+            font=(UI_FONT, 11), width=160,
+            fg_color=ACCENT, text_color=TEXT_COLOR,
+            border_color="#555555", border_width=1,
         )
         self.name_entry.pack(side=tk.LEFT, padx=(8, 0))
 
-        # Emotion prompt (large)
+        # ── Stepper dots ─────────────────────────────────────────
+        sep = tk.Frame(self, bg="#3A3A3A", height=1)
+        sep.pack(fill=tk.X, padx=30, pady=(14, 0))
+
+        stepper_frame = tk.Frame(self, bg=BG_COLOR)
+        stepper_frame.pack(pady=(10, 0))
+        self._stepper_dots:  Dict[str, tk.Label] = {}
+        self._stepper_names: Dict[str, tk.Label] = {}
+        for emotion in self._emotion_order:
+            col = tk.Frame(stepper_frame, bg=BG_COLOR)
+            col.pack(side=tk.LEFT, padx=14)
+            dot = tk.Label(col, text="○", font=(UI_FONT, 15),
+                           bg=BG_COLOR, fg="#444444")
+            dot.pack()
+            name_lbl = tk.Label(col, text=emotion,
+                                font=(UI_FONT, 8), bg=BG_COLOR, fg="#444444")
+            name_lbl.pack()
+            self._stepper_dots[emotion]  = dot
+            self._stepper_names[emotion] = name_lbl
+
+        sep2 = tk.Frame(self, bg="#3A3A3A", height=1)
+        sep2.pack(fill=tk.X, padx=30, pady=(10, 0))
+
+        # ── Emotion prompt ───────────────────────────────────────
         self.prompt_label = tk.Label(
             self, text="Press Start to begin",
-            font=(UI_FONT, 26, "bold"),
+            font=(UI_FONT, 28, "bold"),
             bg=BG_COLOR, fg="#FFD700",
         )
-        self.prompt_label.pack(pady=(20, 4))
+        self.prompt_label.pack(pady=(18, 2))
 
-        # Hint text
         self.hint_label = tk.Label(
             self, text="",
             font=(UI_FONT, 11, "italic"),
-            bg=BG_COLOR, fg="#AAAAAA",
+            bg=BG_COLOR, fg="#888888",
         )
         self.hint_label.pack()
 
-        # Countdown / status
+        # ── Status / countdown ───────────────────────────────────
         self.status_label = tk.Label(
             self, text="",
-            font=(UI_FONT, 14),
+            font=(UI_FONT, 13),
             bg=BG_COLOR, fg=TEXT_COLOR,
         )
-        self.status_label.pack(pady=(12, 4))
+        self.status_label.pack(pady=(10, 2))
 
-        # Progress bar
-        self.progress_var = tk.DoubleVar(value=0.0)
+        # ── Live detection feedback ──────────────────────────────
+        self.live_label = tk.Label(
+            self, text="",
+            font=(UI_FONT, 10, "italic"),
+            bg=BG_COLOR, fg="#666666",
+        )
+        self.live_label.pack()
+
+        # ── Per-emotion recording bar ────────────────────────────
         style = ttk.Style()
-        style.configure(
-            "Cal.Horizontal.TProgressbar",
-            troughcolor=ACCENT, background="#4CAF50",
+        style.configure("Rec.Horizontal.TProgressbar",
+                        troughcolor=ACCENT, background="#4CAF50")
+        self.record_var = tk.DoubleVar(value=0.0)
+        self.record_bar = ttk.Progressbar(
+            self, variable=self.record_var,
+            maximum=1.0, length=420,
+            style="Rec.Horizontal.TProgressbar",
         )
-        self.progress_bar = ttk.Progressbar(
-            self, variable=self.progress_var,
-            maximum=len(self._emotion_order),
-            length=400, style="Cal.Horizontal.TProgressbar",
-        )
-        self.progress_bar.pack(pady=(8, 4))
+        # record_bar and text start hidden; shown when recording begins
+        self.record_bar.pack_forget()
 
+        self.record_text = tk.Label(
+            self, text="",
+            font=(UI_FONT, 9), bg=BG_COLOR, fg="#666666",
+        )
+
+        # Overall progress — stepper dots already show this visually;
+        # keep a simple text counter, no extra bar needed
+        self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_text = tk.Label(
-            self, text="0 / 5 emotions",
-            font=(UI_FONT, 10), bg=BG_COLOR, fg=TEXT_COLOR,
+            self, text="",
+            font=(UI_FONT, 9), bg=BG_COLOR, fg="#666666",
         )
-        self.progress_text.pack()
+        self.progress_text.pack(pady=(4, 0))
 
-        # Buttons
+        # ── Buttons ──────────────────────────────────────────────
         btn_frame = tk.Frame(self, bg=BG_COLOR)
-        btn_frame.pack(pady=(16, 16))
+        btn_frame.pack(pady=(14, 18))
 
-        self.start_btn = tk.Button(
+        self.start_btn = ctk.CTkButton(
             btn_frame, text="Start",
             font=(UI_FONT, 12, "bold"),
-            bg=BTN_START, fg="white",
-            activebackground="#388E3C",
-            relief=tk.FLAT, width=12,
+            fg_color=BTN_START, hover_color=BTN_START_HOVER,
+            text_color="white", width=130,
             command=self._on_start,
         )
         self.start_btn.pack(side=tk.LEFT, padx=8)
 
-        self.cancel_btn = tk.Button(
+        self.cancel_btn = ctk.CTkButton(
             btn_frame, text="Cancel",
             font=(UI_FONT, 12),
-            bg=BTN_STOP, fg="white",
-            activebackground="#D32F2F",
-            relief=tk.FLAT, width=12,
+            fg_color="#3A3A3A", hover_color="#4A4A4A",
+            text_color="#AAAAAA", width=130,
             command=self._on_cancel,
         )
         self.cancel_btn.pack(side=tk.LEFT, padx=8)
+
+    def _update_stepper(self, current_idx: int) -> None:
+        for i, emotion in enumerate(self._emotion_order):
+            if i < current_idx:
+                color = "#4CAF50"
+                dot   = "●"
+            elif i == current_idx:
+                color = EMOTION_HEX.get(emotion, "#FFD700")
+                dot   = "●"
+            else:
+                color = "#444444"
+                dot   = "○"
+            self._stepper_dots[emotion].configure(text=dot, fg=color)
+            self._stepper_names[emotion].configure(fg=color)
 
     # ── Wizard flow ──────────────────────────────────────────────
 
@@ -2368,8 +2819,9 @@ class CalibrationWizard(tk.Toplevel):
         self.mgr.start_session(user_name, model_name, frames_per_emotion)
         self._current_idx = 0
         self._phase = "prep"
+        self._update_stepper(0)
 
-        self.start_btn.configure(state=tk.DISABLED)
+        self.start_btn.configure(state="disabled")
         self.name_entry.configure(state=tk.DISABLED)
 
         self._begin_prep()
@@ -2377,15 +2829,20 @@ class CalibrationWizard(tk.Toplevel):
     def _begin_prep(self) -> None:
         """Start the countdown phase for the current emotion."""
         emotion = self._emotion_order[self._current_idx]
-        color = EMOTION_HEX.get(emotion, "#FFD700")
-        hint = self.EMOTION_HINTS.get(emotion, "")
+        color   = EMOTION_HEX.get(emotion, "#FFD700")
+        hint    = self.EMOTION_HINTS.get(emotion, "")
 
+        self._update_stepper(self._current_idx)
         self.prompt_label.configure(text=emotion.upper(), fg=color)
         self.hint_label.configure(text=hint)
         self._countdown = self.PREP_SECONDS
         self._phase = "prep"
+        self.record_var.set(0.0)
+        self.record_bar.pack_forget()
+        self.record_text.configure(text="")
+        self.live_label.configure(text="")
         self.status_label.configure(
-            text=f"Get ready... {self.PREP_SECONDS}", fg="#FFD700",
+            text=f"Get ready...  {self.PREP_SECONDS}", fg="#FFD700",
         )
         self._tick()
 
@@ -2393,7 +2850,10 @@ class CalibrationWizard(tk.Toplevel):
         """Switch from prep countdown to frame recording."""
         self._phase = "record"
         self._frames_recorded = 0
-        self.status_label.configure(text="Recording...", fg="#4CAF50")
+        self.record_var.set(0.0)
+        self.record_bar.pack(pady=(8, 2))
+        self.record_text.pack()
+        self.status_label.configure(text="● Recording", fg="#4CAF50")
         self._tick()
 
     def _tick(self) -> None:
@@ -2414,8 +2874,17 @@ class CalibrationWizard(tk.Toplevel):
             if any(v > 0 for v in probs.values()):
                 emotion, recorded, needed = self.mgr.record_frame(probs)
                 self._frames_recorded = recorded
-                self.status_label.configure(
-                    text=f"Recording... {recorded}/{needed}",
+                self.record_var.set(recorded / max(needed, 1))
+                self.record_text.configure(
+                    text=f"{recorded} / {needed} frames captured",
+                    fg="#4CAF50",
+                )
+                # Live detection feedback
+                live_emotion = max(probs, key=probs.get)
+                live_conf    = probs[live_emotion]
+                self.live_label.configure(
+                    text=f"Model sees: {live_emotion} ({live_conf:.0%})",
+                    fg=EMOTION_HEX.get(live_emotion, "#888888"),
                 )
 
             if self.mgr.get_current_emotion() is None or (
@@ -2457,6 +2926,10 @@ class CalibrationWizard(tk.Toplevel):
             if score < 0.2:
                 warnings.append(emotion)
 
+        self._update_stepper(len(self._emotion_order))
+        self.record_var.set(0.0)
+        self.record_text.configure(text="")
+        self.live_label.configure(text="")
         self.prompt_label.configure(text="Done!", fg="#4CAF50")
         self.hint_label.configure(text="")
 
@@ -2481,8 +2954,9 @@ class CalibrationWizard(tk.Toplevel):
 
         # Replace buttons with Close
         self.start_btn.configure(
-            text="Close", state=tk.NORMAL,
-            command=self.destroy, bg=ACCENT,
+            text="Close", state="normal",
+            command=self.destroy,
+            fg_color=ACCENT, hover_color=ACCENT,
         )
         self.cancel_btn.pack_forget()
 
