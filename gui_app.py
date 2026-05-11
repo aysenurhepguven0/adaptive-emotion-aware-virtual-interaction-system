@@ -382,8 +382,284 @@ class EmotionGUI:
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Show welcome / quick-start tutorial on first launch
-        self.root.after(600, self._show_welcome_dialog)
+        # Reset welcome flag so the dialog shows on every fresh launch.
+        # "Don't show again" only suppresses it within the current session.
+        self._WELCOME_FLAG.unlink(missing_ok=True)
+
+        # Show KVKK/GDPR privacy notice, then welcome dialog on first launch
+        self.root.after(600, self._show_privacy_notice)
+
+    # ─────────────────────────────────────────────────────────────
+    #  KVKK / GDPR Privacy Notice  (shown every launch)
+    # ─────────────────────────────────────────────────────────────
+    # Structured content: list of (tag, text) pairs
+    _PRIVACY_CONTENT = [
+        # ── KVKK ─────────────────────────────────────────────────
+        ("kvkk_title",   "KİŞİSEL VERİLERİN KORUNMASI KANUNU (KVKK)"),
+        ("kvkk_title",   "KAPSAMINDA AYDINLATMA METNİ"),
+        ("spacer",       ""),
+        ("kvkk_section", "Veri Sorumlusu"),
+        ("body",         "Bu uygulamayı çalıştıran araştırmacı / kurum, 6698 sayılı KVKK "
+                         "uyarınca veri sorumlusu sıfatını taşımaktadır."),
+        ("spacer",       ""),
+        ("kvkk_section", "İşlenen Kişisel Veriler"),
+        ("body",         "Webcam aracılığıyla anlık yüz görüntünüz işlenmektedir. "
+                         "Biyometrik nitelik taşıyan bu veri KVKK Madde 6 kapsamında "
+                         "özel nitelikli kişisel veri sayılmaktadır."),
+        ("spacer",       ""),
+        ("kvkk_section", "İşleme Amacı"),
+        ("bullet",       "Gerçek zamanlı yüz ifadesi / duygu analizi"),
+        ("bullet",       "TouchDesigner görselleştirme sisteminin yönlendirilmesi"),
+        ("bullet",       "Akademik / araştırma amaçlı model değerlendirmesi"),
+        ("spacer",       ""),
+        ("kvkk_section", "Hukuki Dayanak"),
+        ("body",         "KVKK Madde 5/2-(f): Veri sorumlusunun meşru menfaatleri "
+                         "için işlemenin zorunlu olması."),
+        ("spacer",       ""),
+        ("kvkk_section", "Saklama Süresi"),
+        ("body",         "Görüntüler diske kaydedilmez; yalnızca anlık çerçeve işlemi "
+                         "için RAM'e alınır ve işlem tamamlandıktan hemen sonra bellekten silinir."),
+        ("spacer",       ""),
+        ("kvkk_section", "Veri Aktarımı"),
+        ("body",         "Kişisel veriler hiçbir üçüncü tarafla paylaşılmaz. "
+                         "Tüm işlem yerel cihazınız üzerinde gerçekleşir."),
+        ("spacer",       ""),
+        ("kvkk_section", "Haklarınız  (KVKK Madde 11)"),
+        ("bullet",       "Verilerinizin işlenip işlenmediğini öğrenme"),
+        ("bullet",       "İşleme amacını ve amacına uygun kullanımı sorgulama"),
+        ("bullet",       "Verilerin aktarıldığı üçüncü tarafları bilme"),
+        ("bullet",       "Eksik / yanlış verilerin düzeltilmesini isteme"),
+        ("bullet",       "Verilerinizin silinmesini / yok edilmesini talep etme"),
+        ("bullet",       "İşlemeye ve otomatik kararlara itiraz etme"),
+        # ── GDPR separator ───────────────────────────────────────
+        ("separator",    ""),
+        # ── GDPR ─────────────────────────────────────────────────
+        ("gdpr_title",   "GDPR — GENERAL DATA PROTECTION REGULATION"),
+        ("gdpr_title",   "PRIVACY NOTICE (FOR INTERNATIONAL USERS)"),
+        ("spacer",       ""),
+        ("gdpr_section", "Data Controller"),
+        ("body",         "The researcher or institution operating this application "
+                         "acts as the data controller under the GDPR."),
+        ("spacer",       ""),
+        ("gdpr_section", "Data Processed"),
+        ("body",         "Your facial image is captured in real time via webcam. "
+                         "Facial data constitutes biometric data and is classified as a "
+                         "special category of personal data under GDPR Article 9."),
+        ("spacer",       ""),
+        ("gdpr_section", "Purpose & Legal Basis"),
+        ("bullet",       "Real-time facial expression / emotion recognition"),
+        ("bullet",       "Driving the TouchDesigner visualisation system"),
+        ("bullet",       "Academic research and model evaluation"),
+        ("body",         "Legal basis: Article 6(1)(f) GDPR — legitimate interests of "
+                         "the controller, balanced against your fundamental rights."),
+        ("spacer",       ""),
+        ("gdpr_section", "Retention"),
+        ("body",         "No images are written to disk. Processing is in-memory only; "
+                         "each frame is discarded immediately after analysis."),
+        ("spacer",       ""),
+        ("gdpr_section", "Data Transfers"),
+        ("body",         "No personal data is transferred to third parties or "
+                         "transmitted outside your local device."),
+        ("spacer",       ""),
+        ("gdpr_section", "Your Rights  (GDPR Articles 15-22)"),
+        ("bullet",       "Right of access to your personal data"),
+        ("bullet",       "Right to rectification of inaccurate data"),
+        ("bullet",       "Right to erasure  ('right to be forgotten')"),
+        ("bullet",       "Right to restriction of processing"),
+        ("bullet",       "Right to object to processing"),
+        ("bullet",       "Right not to be subject to solely automated decisions"),
+        ("spacer",       ""),
+        ("body",         "To exercise your rights or raise a data-protection concern, "
+                         "please contact the application operator directly."),
+        ("spacer",       ""),
+    ]
+
+    def _show_privacy_notice(self) -> None:
+        self._build_privacy_notice_window()
+
+    def _on_privacy_reject(self, win: tk.Toplevel) -> None:
+        win.destroy()
+        self._on_close()
+
+    def _build_privacy_notice_window(self) -> None:
+        win = tk.Toplevel(self.root)
+        win.title("Aydınlatma Metni / Privacy Notice  —  KVKK & GDPR")
+        win.resizable(True, True)
+        win.configure(bg="#1A1A1A")
+        win.grab_set()
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_privacy_reject(win))
+
+        self.root.update_idletasks()
+        px = self.root.winfo_x() + self.root.winfo_width() // 2
+        py = self.root.winfo_y() + self.root.winfo_height() // 2
+        win.geometry(f"720x640+{px - 360}+{py - 320}")
+
+        BG       = "#1A1A1A"
+        HDR_BG   = "#202025"
+        TXT_BG   = "#1C1C1E"
+        GOLD     = "#E6B800"
+        BLUE_SEC = "#5BC8F5"
+        GRN_SEC  = "#7EC8A0"
+        BODY_FG  = "#C8C8C8"
+        BULLET_FG= "#A0A0A0"
+        DIM_FG   = "#686868"
+
+        # ── Accent stripe ─────────────────────────────────────────
+        tk.Frame(win, bg="#1C3A6A", height=4).pack(fill=tk.X)
+
+        # ── Header panel ──────────────────────────────────────────
+        hdr = tk.Frame(win, bg=HDR_BG, pady=14)
+        hdr.pack(fill=tk.X)
+
+        left_hdr = tk.Frame(hdr, bg=HDR_BG)
+        left_hdr.pack(side=tk.LEFT, padx=22)
+
+        tk.Label(
+            left_hdr, text="🔒",
+            font=(UI_FONT, 20), bg=HDR_BG, fg=GOLD,
+        ).pack(side=tk.LEFT, padx=(0, 12), anchor="center")
+
+        lbl_col = tk.Frame(left_hdr, bg=HDR_BG)
+        lbl_col.pack(side=tk.LEFT)
+        tk.Label(
+            lbl_col, text="Aydınlatma Metni",
+            font=(UI_FONT, 15, "bold"), bg=HDR_BG, fg=GOLD, anchor="w",
+        ).pack(anchor="w")
+        tk.Label(
+            lbl_col, text="Privacy Notice",
+            font=(UI_FONT, 10), bg=HDR_BG, fg=DIM_FG, anchor="w",
+        ).pack(anchor="w")
+
+        badge_frame = tk.Frame(hdr, bg=HDR_BG)
+        badge_frame.pack(side=tk.RIGHT, padx=22, anchor="center")
+        for label, bg_c, fg_c in [
+            ("KVKK", "#1A3060", "#5BC8F5"),
+            ("GDPR", "#103828", "#7EC8A0"),
+        ]:
+            tk.Label(
+                badge_frame, text=label,
+                font=(UI_FONT, 9, "bold"),
+                bg=bg_c, fg=fg_c,
+                padx=10, pady=4,
+                relief=tk.FLAT,
+            ).pack(side=tk.LEFT, padx=4)
+
+        tk.Frame(win, bg="#2A2A2E", height=1).pack(fill=tk.X)
+
+        # ── Scrollable text area ──────────────────────────────────
+        txt_outer = tk.Frame(win, bg=TXT_BG)
+        txt_outer.pack(fill=tk.BOTH, expand=True)
+
+        vsb = ttk.Scrollbar(txt_outer)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        txt = tk.Text(
+            txt_outer,
+            yscrollcommand=vsb.set,
+            bg=TXT_BG, fg=BODY_FG,
+            font=(UI_FONT, 10),
+            wrap=tk.WORD,
+            relief=tk.FLAT,
+            padx=26, pady=18,
+            cursor="arrow",
+            bd=0,
+            highlightthickness=0,
+            selectbackground="#3A3A40",
+            insertbackground=TXT_BG,
+        )
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+
+        # Configure tags
+        txt.tag_config(
+            "kvkk_title",
+            font=(UI_FONT, 12, "bold"), foreground=GOLD,
+            spacing1=2, spacing3=2,
+        )
+        txt.tag_config(
+            "gdpr_title",
+            font=(UI_FONT, 12, "bold"), foreground=GRN_SEC,
+            spacing1=2, spacing3=2,
+        )
+        txt.tag_config(
+            "kvkk_section",
+            font=(UI_FONT, 10, "bold"), foreground=BLUE_SEC,
+            spacing1=10, spacing3=2,
+        )
+        txt.tag_config(
+            "gdpr_section",
+            font=(UI_FONT, 10, "bold"), foreground=GRN_SEC,
+            spacing1=10, spacing3=2,
+        )
+        txt.tag_config(
+            "body",
+            font=(UI_FONT, 10), foreground=BODY_FG,
+            spacing3=4,
+        )
+        txt.tag_config(
+            "bullet",
+            font=(UI_FONT, 10), foreground=BULLET_FG,
+            lmargin1=18, lmargin2=28,
+            spacing1=1, spacing3=1,
+        )
+        txt.tag_config(
+            "separator",
+            font=(UI_FONT, 7), foreground="#2E2E32",
+            spacing1=14, spacing3=14,
+        )
+        txt.tag_config("spacer", font=(UI_FONT, 4), spacing1=0)
+
+        for tag, text in self._PRIVACY_CONTENT:
+            if tag == "separator":
+                txt.insert(tk.END, "─" * 72 + "\n", tag)
+            elif tag == "bullet":
+                txt.insert(tk.END, f"  ›  {text}\n", tag)
+            elif tag == "spacer":
+                txt.insert(tk.END, "\n", tag)
+            else:
+                txt.insert(tk.END, text + "\n", tag)
+
+        txt.config(state=tk.DISABLED)
+
+        # ── Bottom bar ────────────────────────────────────────────
+        tk.Frame(win, bg="#2A2A2E", height=1).pack(fill=tk.X)
+
+        bottom = tk.Frame(win, bg=BG, pady=12)
+        bottom.pack(fill=tk.X, padx=22)
+
+        tk.Label(
+            bottom,
+            text="Devam etmek için metni okuyup onaylamanız gerekmektedir.",
+            font=(UI_FONT, 9), bg=BG, fg=DIM_FG,
+            anchor="w",
+        ).pack(side=tk.LEFT, anchor="w")
+
+        def _accept() -> None:
+            win.destroy()
+            self._show_welcome_dialog()
+
+        ctk.CTkButton(
+            bottom,
+            text="Kapat / Exit",
+            font=(UI_FONT, 10),
+            fg_color="#3A1A1A", hover_color="#5A2A2A",
+            text_color="#CC7777",
+            corner_radius=8, height=34, width=130,
+            command=lambda: self._on_privacy_reject(win),
+        ).pack(side=tk.RIGHT, padx=(8, 0))
+
+        ctk.CTkButton(
+            bottom,
+            text="Okudum, Anladım  ✓",
+            font=(UI_FONT, 11, "bold"),
+            fg_color="#163A22", hover_color="#1F5230",
+            text_color="#7EC8A0",
+            corner_radius=8, height=34, width=190,
+            command=_accept,
+        ).pack(side=tk.RIGHT)
+
+        win.bind("<Return>", lambda _e: _accept())
+        win.bind("<Escape>", lambda _e: self._on_privacy_reject(win))
 
     # ─────────────────────────────────────────────────────────────
     #  Welcome / Quick-Start Tutorial
