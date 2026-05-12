@@ -1793,8 +1793,11 @@ class EmotionGUI:
         path = filedialog.askopenfilename(
             title="Select test image",
             filetypes=[
-                ("Image files", "*.png;*.jpg;*.jpeg;*.bmp"),
-                ("All files", "*.*"),
+                ("PNG files", "*.png"),
+                ("JPEG files", "*.jpg"),
+                ("JPEG files", "*.jpeg"),
+                ("BMP files", "*.bmp"),
+                ("All files", "*"),
             ],
         )
         if not path:
