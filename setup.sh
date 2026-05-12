@@ -13,7 +13,7 @@ echo "Installing PyTorch (with MPS support for Apple Silicon)..."
 .venv/bin/pip install torch torchvision
 
 echo "Installing remaining dependencies..."
-.venv/bin/pip install timm numpy pandas scikit-learn matplotlib opencv-python Pillow tqdm python-osc
+.venv/bin/pip install timm numpy pandas scikit-learn matplotlib opencv-python Pillow tqdm python-osc customtkinter
 
 echo ""
 echo "Setup complete! To launch the application:"
