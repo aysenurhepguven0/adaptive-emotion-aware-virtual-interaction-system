@@ -2032,6 +2032,12 @@ class EmotionGUI:
     def _start(self) -> None:
         if self.running:
             return
+        if self.model is None or self.transform is None:
+            messagebox.showerror(
+                "Model Not Loaded",
+                "No model is loaded. Please select a valid model checkpoint before starting.",
+            )
+            return
 
         # Read UDP settings
         try:
@@ -2291,6 +2297,8 @@ class EmotionGUI:
                                 self._cached_ensemble_probs,
                             )
                     else:
+                        if self.transform is None:
+                            continue
                         # Tensor is always built (also needed for Grad-CAM),
                         # but the forward pass only runs every 2nd frame —
                         # cached probs fill the gap so FPS stays smooth.
