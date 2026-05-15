@@ -93,7 +93,7 @@ EMOTION_TR = EMOTION_LABELS["TR"]  # backwards compat alias
 UI_TEXT: Dict[str, Dict[str, str]] = {
     "TR": {
         "section_control":    "Kontrol Paneli",
-        "section_monitoring": "İzleme",
+        "section_monitoring": "Canlı İzleme Paneli",
         "h_model":    "Model Seçimi",
         "h_udp":      "UDP Ayarları",
         "h_sens":     "Hassasiyet",
@@ -760,9 +760,15 @@ class EmotionGUI:
         bottom = tk.Frame(win, bg=BG, pady=12)
         bottom.pack(fill=tk.X, padx=22)
 
+        is_tr = self.lang == "TR"
+
         tk.Label(
             bottom,
-            text="Devam etmek için metni okuyup onaylamanız gerekmektedir.",
+            text=(
+                "Devam etmek için metni okuyup onaylamanız gerekmektedir."
+                if is_tr else
+                "Please read the notice and confirm to continue."
+            ),
             font=(UI_FONT, 9), bg=BG, fg=DIM_FG,
             anchor="w",
         ).pack(side=tk.LEFT, anchor="w")
@@ -773,7 +779,7 @@ class EmotionGUI:
 
         ctk.CTkButton(
             bottom,
-            text="Kapat / Exit",
+            text="Kapat" if is_tr else "Exit",
             font=(UI_FONT, 10),
             fg_color="#3A1A1A", hover_color="#5A2A2A",
             text_color="#CC7777",
@@ -783,7 +789,7 @@ class EmotionGUI:
 
         ctk.CTkButton(
             bottom,
-            text="Okudum, Anladım  ✓",
+            text="Okudum, Anladım  ✓" if is_tr else "I have read and understood  ✓",
             font=(UI_FONT, 11, "bold"),
             fg_color="#163A22", hover_color="#1F5230",
             text_color="#7EC8A0",
@@ -1652,13 +1658,15 @@ class EmotionGUI:
         self.device_label.pack(fill=tk.X, pady=(8, 0))
 
         # "? How to use" — bottom-right of monitoring panel
-        self._tw["btn_how_to"] = tk.Button(
+        _how_to_btn = tk.Button(
             panel, text=self._t("btn_how_to"),
             font=(UI_FONT, 9), bg=PANEL_BG, fg="#666666",
             relief=tk.FLAT, cursor="hand2", bd=0,
             activebackground=PANEL_BG, activeforeground="#AAAAAA",
             command=self._build_welcome_window,
-        ).pack(side=tk.BOTTOM, anchor="e", padx=12, pady=(0, 8))
+        )
+        _how_to_btn.pack(side=tk.BOTTOM, anchor="e", padx=12, pady=(0, 8))
+        self._tw["btn_how_to"] = _how_to_btn
         print("[GUI]     _build_monitoring_panel: performance labels packed — DONE")
 
     # ── UI helpers ───────────────────────────────────────────────
@@ -2061,11 +2069,26 @@ class EmotionGUI:
 
     def _open_calibration_wizard(self) -> None:
         if not self.running:
+            is_tr = self.lang == "TR"
+            ok = messagebox.askyesno(
+                "Kamera Gerekli" if is_tr else "Camera Required",
+                (
+                    "Kalibrasyon için kamera gereklidir.\nKamera başlatılsın mı?"
+                    if is_tr else
+                    "Calibration requires the camera.\nStart the camera now?"
+                ),
+            )
+            if not ok:
+                return
             self._start()
             if not self.running:
                 messagebox.showerror(
-                    "Camera Error",
-                    "Could not start the camera. Please check your camera and try again.",
+                    "Kamera Hatası" if is_tr else "Camera Error",
+                    (
+                        "Kamera başlatılamadı. Lütfen kameranızı kontrol edip tekrar deneyin."
+                        if is_tr else
+                        "Could not start the camera. Please check your camera and try again."
+                    ),
                 )
                 return
         if self.model is None:
