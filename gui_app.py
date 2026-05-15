@@ -35,13 +35,14 @@ from tkinter import ttk
 from tkinter import filedialog
 from tkinter import messagebox
 import customtkinter as ctk
+from collections import deque
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 import torch
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 from torchvision import transforms
 
 from data.dataset import build_transforms
@@ -49,6 +50,7 @@ from models import get_model_config, load_model_from_checkpoint
 from utils.grad_cam import GradCAM, get_target_layer, overlay_heatmap
 from utils.calibration import CalibrationManager
 from utils.ensemble import EnsembleManager
+from utils.landmark_scorer import LandmarkScorer
 
 # ── Paths ────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -76,6 +78,121 @@ EMOTION_BGR: Dict[str, Tuple[int, int, int]] = {
     "surprise": (216, 180, 0),
     "sad":      (225, 105, 65),
     "angry":    (54, 41, 204),
+}
+
+# Emotion display names per language
+EMOTION_LABELS: Dict[str, Dict[str, str]] = {
+    "TR": {"happy": "Mutlu",   "neutral": "Nötr",    "surprise": "Şaşkın",
+           "sad":   "Üzgün",   "angry":   "Kızgın"},
+    "EN": {"happy": "Happy",   "neutral": "Neutral",  "surprise": "Surprise",
+           "sad":   "Sad",     "angry":   "Angry"},
+}
+EMOTION_TR = EMOTION_LABELS["TR"]  # backwards compat alias
+
+# All UI text strings, keyed by language
+UI_TEXT: Dict[str, Dict[str, str]] = {
+    "TR": {
+        "section_control":    "Kontrol Paneli",
+        "section_monitoring": "İzleme",
+        "h_model":    "Model Seçimi",
+        "h_udp":      "UDP Ayarları",
+        "h_sens":     "Hassasiyet",
+        "h_cal":      "Kalibrasyon",
+        "h_webcam":   "Kamera Önizleme",
+        "h_test":     "Test Görüntüsü",
+        "h_probs":    "Duygu Olasılıkları",
+        "h_dominant": "Baskın Duygu",
+        "h_perf":     "Performans",
+        "strategy":       "Strateji:",
+        "include_models": "Modeller:",
+        "btn_calibrate":  "Kalibre Et",
+        "btn_load_cal":   "Yükle",
+        "btn_clear":      "Temizle",
+        "btn_img_cal":    "Görüntüden Kalibre Et",
+        "btn_load_img":   "Yükle",
+        "btn_start":      "BAŞLAT",
+        "btn_stop":       "DURDUR",
+        "btn_how_to":     "?  Nasıl Kullanılır",
+        "chk_gradcam":    "Grad-CAM Göster  (CPU yoğun)",
+        "chk_landmark":   "Landmark Desteği",
+        "chk_test":       "Test görüntüsü kullan",
+        "cal_inactive":   "Pasif",
+        "cal_active_pfx": "Aktif",
+        "camera_off":     "Kamera Kapalı",
+        "camera_hint":    "▶  Kamerayı açmak için BAŞLAT'a bas",
+        "viz_header":     "Parçacık Görselleştirme Alanı",
+        "viz_footer":     "Gerçek zamanlı adaptif parçacık görselleştirme",
+        "placeholder_mac": (
+            "TouchDesigner'a UDP ile bağlanıldı\n"
+            "Texture paylaşımı için Syphon gereklidir\n"
+            "(pip install syphon-python)\n\n"
+            "UDP verisi gönderiliyor:\n"
+        ),
+        "placeholder_win": (
+            "TouchDesigner'a Spout ile bağlanın\n"
+            "veya TD'yi bu uygulama ile çalıştırın.\n\n"
+            "UDP verisi gönderiliyor:\n"
+        ),
+        "latency_lbl":  "Gecikme:",
+        "udp_lbl":      "UDP:",
+        "device_lbl":   "Cihaz:",
+        "loading_sfx":  "(yükleniyor…)",
+        "lang_btn":          "🌐 EN",
+        "occlusion_warn":    "⚠ Gözlük / engel var mı?",
+        "lang_dialog_title": "Dil Seçin",
+        "lang_dialog_sub":   "Select Language",
+    },
+    "EN": {
+        "section_control":    "Control Panel",
+        "section_monitoring": "Monitoring",
+        "h_model":    "Model Selection",
+        "h_udp":      "UDP Settings",
+        "h_sens":     "Sensitivity",
+        "h_cal":      "Calibration",
+        "h_webcam":   "Webcam Preview",
+        "h_test":     "Test Image",
+        "h_probs":    "Emotion Probabilities",
+        "h_dominant": "Dominant Emotion",
+        "h_perf":     "Performance",
+        "strategy":       "Strategy:",
+        "include_models": "Include models:",
+        "btn_calibrate":  "Calibrate",
+        "btn_load_cal":   "Load",
+        "btn_clear":      "Clear",
+        "btn_img_cal":    "Calibrate from Images",
+        "btn_load_img":   "Load",
+        "btn_start":      "START",
+        "btn_stop":       "STOP",
+        "btn_how_to":     "?  How to use",
+        "chk_gradcam":    "Show Grad-CAM overlay  (CPU intensive)",
+        "chk_landmark":   "Landmark Assist",
+        "chk_test":       "Use test image",
+        "cal_inactive":   "Inactive",
+        "cal_active_pfx": "Active",
+        "camera_off":     "Camera Off",
+        "camera_hint":    "▶  Press START to open the camera",
+        "viz_header":     "Particle Visualization Area",
+        "viz_footer":     "Real-time adaptive particle rendering",
+        "placeholder_mac": (
+            "TouchDesigner connected via UDP\n"
+            "For texture sharing, Syphon is required\n"
+            "(pip install syphon-python)\n\n"
+            "Sending UDP data to:\n"
+        ),
+        "placeholder_win": (
+            "Connect TouchDesigner via Spout\n"
+            "or run TD alongside this application.\n\n"
+            "UDP data is being sent to:\n"
+        ),
+        "latency_lbl":  "Latency:",
+        "udp_lbl":      "UDP Send:",
+        "device_lbl":   "Device:",
+        "loading_sfx":  "(loading…)",
+        "lang_btn":          "🌐 TR",
+        "occlusion_warn":    "⚠ Glasses / obstruction?",
+        "lang_dialog_title": "Dil Seçin",
+        "lang_dialog_sub":   "Select Language",
+    },
 }
 
 # ── Model checkpoint discovery ───────────────────────────────────
@@ -342,6 +459,10 @@ class EmotionGUI:
         # Calibration
         self.calibration_mgr = CalibrationManager(EMOTION_CLASSES)
 
+        # Language ("TR" or "EN") — set by startup dialog
+        self.lang = "TR"
+        self._tw: Dict[str, Any] = {}  # translatable widget registry
+
         # Ensemble
         self.ensemble_mode = False
         self.ensemble_mgr: Optional[EnsembleManager] = None
@@ -354,6 +475,14 @@ class EmotionGUI:
         self._cached_faces = ()
         self._cached_gradcam = None
         self._cached_single_probs: Optional[Dict[str, float]] = None
+
+        # Temporal smoothing: rolling average over last N frames
+        self._SMOOTH_WINDOW = 8
+        self._prob_history: deque = deque(maxlen=self._SMOOTH_WINDOW)
+
+        # Landmark-based boost for angry (brow furrow) and sad (mouth droop)
+        self.landmark_boost_enabled = True
+        self._landmark_scorer: Optional[LandmarkScorer] = None
 
         # Test image mode
         self.use_test_image = False
@@ -368,11 +497,15 @@ class EmotionGUI:
         self._spout_placeholder_visible = True
         self._init_spout()
 
+        # ── Language selection (before UI is built) ──────────────
+        self._show_lang_select()
+
         # ── Build UI ─────────────────────────────────────────────
         print("[GUI] Building title bar...")
         self._build_title_bar()
         print("[GUI] Building panels...")
         self._build_panels()
+        self._apply_lang()          # sync all widget texts to selected language
         self.root.update_idletasks()
         print(f"[GUI] Window geometry after build: {self.root.winfo_width()}x{self.root.winfo_height()}")
         print(f"[GUI] Screen size: {self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}")
@@ -673,16 +806,17 @@ class EmotionGUI:
 
     def _build_welcome_window(self) -> None:
         win = tk.Toplevel(self.root)
-        win.title("Quick Start — How to Use")
         win.resizable(False, False)
         win.configure(bg="#1A1A1A")
         win.grab_set()
 
-        # Centre on parent
+        is_tr = self.lang == "TR"
+        win.title("Hızlı Başlangıç — Nasıl Kullanılır" if is_tr else "Quick Start — How to Use")
+
         self.root.update_idletasks()
         px = self.root.winfo_x() + self.root.winfo_width() // 2
         py = self.root.winfo_y() + self.root.winfo_height() // 2
-        win.geometry(f"520x530+{px - 260}+{py - 265}")
+        win.geometry(f"520x540+{px - 260}+{py - 270}")
 
         TITLE_FG = "#E6B800"
         BODY_FG  = "#DDDDDD"
@@ -690,20 +824,43 @@ class EmotionGUI:
         BG       = "#1A1A1A"
 
         tk.Label(
-            win, text="Welcome — Adaptive Emotion Visualization",
-            font=(UI_FONT, 14, "bold"), bg=BG, fg=TITLE_FG,
-            wraplength=480,
+            win,
+            text=("Hoş Geldiniz — Adaptif Duygu Görselleştirme"
+                  if is_tr else
+                  "Welcome — Adaptive Emotion Visualization"),
+            font=(UI_FONT, 14, "bold"), bg=BG, fg=TITLE_FG, wraplength=480,
         ).pack(pady=(22, 4), padx=20)
 
         tk.Label(
             win,
-            text="This app recognises facial expressions in real time and "
-                 "drives the TouchDesigner visualisation. Follow the steps below:",
+            text=("Bu uygulama yüz ifadelerini gerçek zamanlı olarak tanır ve "
+                  "TouchDesigner görselleştirmesini yönetir. Aşağıdaki adımları izleyin:"
+                  if is_tr else
+                  "This app recognises facial expressions in real time and "
+                  "drives the TouchDesigner visualisation. Follow the steps below:"),
             font=(UI_FONT, 10), bg=BG, fg=BODY_FG,
             wraplength=480, justify="left",
         ).pack(padx=24, pady=(0, 12), anchor="w")
 
-        steps = [
+        steps_tr = [
+            ("1", "Model Seçin",
+             "Sol panelin üstündeki açılır menüden bir model seçin.\n"
+             "(Varsayılan: ResNet-18 — başlangıç için önerilir)"),
+            ("2", "BAŞLAT'a basın  →  Kamera açılır",
+             "Sol alttaki yeşil BAŞLAT düğmesine tıklayın.\n"
+             "Kamera açılır ve canlı önizleme panelde görünür."),
+            ("3", "Kameraya bakın",
+             "~50 cm uzakta oturun, düz bakın — iyi aydınlatma en iyi sonucu verir."),
+            ("4", "Duygu etiketlerini izleyin",
+             "Sağ panel algılanan duyguyu ve güven skorunu gösterir.\n"
+             "TouchDesigner bağlıysa orta panel görsel olarak tepki verir."),
+            ("5", "Kayıtlı görüntüyle test edin  (isteğe bağlı)",
+             "'Test görüntüsü kullan' kutusunu işaretleyin, Yükle'ye tıklayıp fotoğraf seçin.\n"
+             "BAŞLAT'a basın — model kamera yerine görüntü üzerinde çalışır."),
+            ("6", "Bitince DURDUR'a basın",
+             "Kamerayı kapatmak için kırmızı DURDUR düğmesine tıklayın."),
+        ]
+        steps_en = [
             ("1", "Select a Model",
              "Choose a model from the dropdown at the top of the left panel.\n"
              "(Default: ResNet-18 — recommended starting point)"),
@@ -721,23 +878,20 @@ class EmotionGUI:
             ("6", "Press STOP when done",
              "Click the red STOP button to close the camera and end the session."),
         ]
+        steps = steps_tr if is_tr else steps_en
 
         for num, title, body in steps:
             row = tk.Frame(win, bg=BG)
             row.pack(padx=22, pady=3, fill=tk.X, anchor="w")
-
             tk.Label(
                 row, text=num, width=2,
                 font=(UI_FONT, 11, "bold"), bg="#E6B800", fg="#000000",
             ).pack(side=tk.LEFT, anchor="n", padx=(0, 10), pady=2)
-
             col = tk.Frame(row, bg=BG)
             col.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
             tk.Label(
                 col, text=title,
-                font=(UI_FONT, 11, "bold"), bg=BG, fg=BODY_FG,
-                anchor="w",
+                font=(UI_FONT, 11, "bold"), bg=BG, fg=BODY_FG, anchor="w",
             ).pack(anchor="w")
             tk.Label(
                 col, text=body,
@@ -752,7 +906,8 @@ class EmotionGUI:
 
         dont_show_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
-            bottom, text="Don't show again",
+            bottom,
+            text="Bir daha gösterme" if is_tr else "Don't show again",
             variable=dont_show_var,
             bg=BG, fg=STEP_FG, selectcolor="#333333",
             activebackground=BG, activeforeground=STEP_FG,
@@ -769,18 +924,20 @@ class EmotionGUI:
             self.root.after(200, lambda: TutorialOverlay(self))
 
         ctk.CTkButton(
-            bottom, text="Take a Tour →",
+            bottom,
+            text="Tura Katıl →" if is_tr else "Take a Tour →",
             font=(UI_FONT, 11),
             fg_color="#2A4080", hover_color="#3A50A0",
-            text_color="white", corner_radius=6, height=32, width=130,
+            text_color="white", corner_radius=6, height=32, width=140,
             command=_tour,
         ).pack(side=tk.RIGHT, padx=(6, 0))
 
         ctk.CTkButton(
-            bottom, text="Got it, Let's Start!",
+            bottom,
+            text="Anladım, Başlayalım!" if is_tr else "Got it, Let's Start!",
             font=(UI_FONT, 12, "bold"),
             fg_color=BTN_START, hover_color=BTN_START_HOVER,
-            text_color="white", corner_radius=6, height=32, width=160,
+            text_color="white", corner_radius=6, height=32, width=180,
             command=_close,
         ).pack(side=tk.RIGHT)
 
@@ -928,9 +1085,19 @@ class EmotionGUI:
     # ─────────────────────────────────────────────────────────────
     def _build_title_bar(self) -> None:
         print("[GUI]   _build_title_bar: creating title frame")
-        title_frame = tk.Frame(self.root, bg="#252526", pady=0)
-        title_frame.pack(side=tk.TOP, fill=tk.X)
-        tk.Frame(title_frame, bg="#007ACC", height=3).pack(fill=tk.X)
+        # Blue stripe doubles as a nav bar — language toggle sits on the right
+        stripe = tk.Frame(self.root, bg="#007ACC")
+        stripe.pack(side=tk.TOP, fill=tk.X)
+        self._tw["lang_btn"] = tk.Button(
+            stripe, text=self._t("lang_btn"),
+            font=(UI_FONT, 9, "bold"),
+            bg="#005A9E", fg="white",
+            activebackground="#004080", activeforeground="white",
+            relief=tk.FLAT, padx=12, pady=3, cursor="hand2",
+            bd=0, highlightthickness=0,
+            command=self._toggle_lang,
+        )
+        self._tw["lang_btn"].pack(side=tk.RIGHT, padx=6, pady=3)
 
     def _build_panels(self) -> None:
         print("[GUI]   _build_panels: creating container frame")
@@ -962,11 +1129,11 @@ class EmotionGUI:
         panel.configure(width=260)
         print("[GUI]     _build_control_panel: panel packed (side=LEFT, width=260)")
 
-        self._section_label(panel, "Control Panel")
+        self._section_label(panel, "section_control")
         print("[GUI]     _build_control_panel: section label done")
 
         # Model Selection
-        self._heading(panel, "Model Selection")
+        self._heading(panel, "h_model")
         print("[GUI]     _build_control_panel: Model Selection heading done")
         self.model_var = tk.StringVar(value="ResNet-18")
         model_menu = ttk.Combobox(
@@ -1037,10 +1204,11 @@ class EmotionGUI:
 
         strat_frame = tk.Frame(_ens_inner, bg=PANEL_BG)
         strat_frame.pack(padx=15, fill=tk.X, pady=(0, 6))
-        tk.Label(
-            strat_frame, text="Strategy:",
+        self._tw["strategy"] = tk.Label(
+            strat_frame, text=self._t("strategy"),
             font=(UI_FONT, 10), bg=PANEL_BG, fg=TEXT_COLOR,
-        ).pack(side=tk.LEFT)
+        )
+        self._tw["strategy"].pack(side=tk.LEFT)
         self.ensemble_strategy_var = tk.StringVar(
             value="weighted_avg",
         )
@@ -1052,10 +1220,11 @@ class EmotionGUI:
         )
         strat_menu.pack(side=tk.LEFT, padx=(6, 0))
 
-        tk.Label(
-            _ens_inner, text="Include models:",
+        self._tw["include_models"] = tk.Label(
+            _ens_inner, text=self._t("include_models"),
             font=(UI_FONT, 10), bg=PANEL_BG, fg=TEXT_COLOR,
-        ).pack(padx=15, anchor="w")
+        )
+        self._tw["include_models"].pack(padx=15, anchor="w")
 
         self.ensemble_model_vars: Dict[str, tk.BooleanVar] = {}
         for model_name in MODEL_OPTIONS:
@@ -1074,7 +1243,7 @@ class EmotionGUI:
 
         # UDP Settings
         print("[GUI]     _build_control_panel: UDP Settings heading...")
-        self._heading(panel, "UDP Settings")
+        self._heading(panel, "h_udp")
         udp_frame = tk.Frame(panel, bg=PANEL_BG)
         udp_frame.pack(padx=15, fill=tk.X)
 
@@ -1102,7 +1271,7 @@ class EmotionGUI:
 
         # Sensitivity
         print("[GUI]     _build_control_panel: Sensitivity heading...")
-        self._heading(panel, "Sensitivity")
+        self._heading(panel, "h_sens")
         self.sensitivity_var = tk.DoubleVar(value=0.3)
         sens_slider = tk.Scale(
             panel, from_=0.0, to=1.0, resolution=0.05,
@@ -1117,7 +1286,7 @@ class EmotionGUI:
         # Grad-CAM toggle — off by default (CPU-heavy backward pass).
         self.gradcam_var = tk.BooleanVar(value=False)
         gradcam_chk = tk.Checkbutton(
-            panel, text="Show Grad-CAM overlay  (CPU intensive)",
+            panel, text=self._t("chk_gradcam"),
             variable=self.gradcam_var, bg=PANEL_BG,
             fg=TEXT_COLOR, selectcolor=ACCENT,
             activebackground=PANEL_BG, activeforeground=TEXT_COLOR,
@@ -1125,13 +1294,29 @@ class EmotionGUI:
             command=self._on_gradcam_toggle,
         )
         gradcam_chk.pack(padx=15, anchor="w", pady=(4, 0))
+        self._tw["chk_gradcam"] = gradcam_chk
         print("[GUI]     _build_control_panel: grad-cam checkbox packed")
+
+        # Landmark boost toggle
+        self.landmark_var = tk.BooleanVar(value=True)
+        _lm_chk = tk.Checkbutton(
+            panel, text=self._t("chk_landmark"),
+            variable=self.landmark_var, bg=PANEL_BG,
+            fg=TEXT_COLOR, selectcolor=ACCENT,
+            activebackground=PANEL_BG, activeforeground=TEXT_COLOR,
+            font=(UI_FONT, 10),
+            command=lambda: setattr(
+                self, "landmark_boost_enabled", self.landmark_var.get()
+            ),
+        )
+        _lm_chk.pack(padx=15, anchor="w", pady=(4, 0))
+        self._tw["chk_landmark"] = _lm_chk
 
         # Calibration
         print("[GUI]     _build_control_panel: Calibration heading...")
-        self._heading(panel, "Calibration")
+        self._heading(panel, "h_cal")
         self.cal_status_label = tk.Label(
-            panel, text="Inactive",
+            panel, text=self._t("cal_inactive"),
             font=(UI_FONT, 10), fg="#888888", bg=PANEL_BG,
         )
         self.cal_status_label.pack(padx=15, anchor="w")
@@ -1140,7 +1325,7 @@ class EmotionGUI:
         cal_btn_frame.pack(padx=15, fill=tk.X, pady=(4, 0))
 
         self.calibrate_btn = ctk.CTkButton(
-            cal_btn_frame, text="Calibrate",
+            cal_btn_frame, text=self._t("btn_calibrate"),
             font=(UI_FONT, 11, "bold"),
             fg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER,
             text_color="white", corner_radius=6, height=28, width=0,
@@ -1149,7 +1334,7 @@ class EmotionGUI:
         self.calibrate_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 3))
 
         self.load_cal_btn = ctk.CTkButton(
-            cal_btn_frame, text="Load",
+            cal_btn_frame, text=self._t("btn_load_cal"),
             font=(UI_FONT, 11),
             fg_color=BTN_SECONDARY, hover_color=BTN_SECONDARY_HOVER,
             text_color="white", corner_radius=6, height=28, width=0,
@@ -1158,24 +1343,38 @@ class EmotionGUI:
         self.load_cal_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 3))
 
         self.clear_cal_btn = ctk.CTkButton(
-            cal_btn_frame, text="Clear",
+            cal_btn_frame, text=self._t("btn_clear"),
             font=(UI_FONT, 11),
             fg_color=BTN_SECONDARY, hover_color=BTN_SECONDARY_HOVER,
             text_color="white", corner_radius=6, height=28, width=0,
             command=self._clear_calibration,
         )
         self.clear_cal_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
+
+        # Second row: image-based calibration
+        cal_btn_frame2 = tk.Frame(panel, bg=PANEL_BG)
+        cal_btn_frame2.pack(padx=15, fill=tk.X, pady=(3, 0))
+        self.img_cal_btn = ctk.CTkButton(
+            cal_btn_frame2, text=self._t("btn_img_cal"),
+            font=(UI_FONT, 11),
+            fg_color=BTN_SECONDARY, hover_color=BTN_SECONDARY_HOVER,
+            text_color="white", corner_radius=6, height=28, width=0,
+            command=self._open_image_calibration_wizard,
+        )
+        self.img_cal_btn.pack(fill=tk.X)
         print("[GUI]     _build_control_panel: calibration buttons packed")
 
         # Webcam Preview
         print("[GUI]     _build_control_panel: Webcam Preview heading...")
-        self._heading(panel, "Webcam Preview")
-        tk.Label(
+        self._heading(panel, "h_webcam")
+        _hint_lbl = tk.Label(
             panel,
-            text="▶  Press START to open the camera",
+            text=self._t("camera_hint"),
             font=(UI_FONT, 9, "italic"),
             bg=PANEL_BG, fg="#888888",
-        ).pack(anchor="w", padx=15, pady=(0, 4))
+        )
+        _hint_lbl.pack(anchor="w", padx=15, pady=(0, 4))
+        self._tw["camera_hint"] = _hint_lbl
         webcam_frame = tk.Frame(
             panel,
             bg="#1A1A1A",
@@ -1188,21 +1387,34 @@ class EmotionGUI:
 
         self.webcam_canvas = tk.Label(
             webcam_frame, bg="#1A1A1A",
-            text="Camera Off", fg="#666666",
+            text=self._t("camera_off"), fg="#666666",
             font=(UI_FONT, 11),
         )
         self.webcam_canvas.pack(fill=tk.BOTH, expand=True)
 
+        # Small occlusion warning badge (bottom-left of webcam area, hidden by default)
+        self.occlusion_warn_lbl = tk.Label(
+            webcam_frame,
+            text=self._t("occlusion_warn"),
+            font=(UI_FONT, 7, "bold"),
+            bg="#C05000", fg="#FFFFFF",
+            padx=4, pady=1,
+            relief=tk.FLAT,
+        )
+        self._tw["occlusion_warn"] = self.occlusion_warn_lbl
+        # placed but hidden until triggered
+        self._occlusion_warn_visible = False
+
         # Test Image
         print("[GUI]     _build_control_panel: Test Image heading...")
-        self._heading(panel, "Test Image")
+        self._heading(panel, "h_test")
         test_frame = tk.Frame(panel, bg=PANEL_BG)
         test_frame.pack(padx=15, pady=(0, 8), fill=tk.X)
 
         self.use_test_image_var = tk.BooleanVar(value=False)
         test_toggle = tk.Checkbutton(
             test_frame,
-            text="Use test image",
+            text=self._t("chk_test"),
             variable=self.use_test_image_var,
             bg=PANEL_BG,
             fg=TEXT_COLOR,
@@ -1213,9 +1425,10 @@ class EmotionGUI:
             command=self._on_test_image_toggle,
         )
         test_toggle.pack(side=tk.LEFT)
+        self._tw["chk_test"] = test_toggle
 
         self.load_image_btn = ctk.CTkButton(
-            test_frame, text="Load",
+            test_frame, text=self._t("btn_load_img"),
             font=(UI_FONT, 11),
             fg_color=BTN_PRIMARY, hover_color=BTN_PRIMARY_HOVER,
             text_color="white", corner_radius=6,
@@ -1229,7 +1442,7 @@ class EmotionGUI:
         btn_frame.pack(padx=15, pady=(5, 4), fill=tk.X)
 
         self.start_btn = ctk.CTkButton(
-            btn_frame, text="START",
+            btn_frame, text=self._t("btn_start"),
             font=(UI_FONT, 14, "bold"),
             fg_color=BTN_START, hover_color=BTN_START_HOVER,
             text_color="white", corner_radius=6, height=32, width=0,
@@ -1238,7 +1451,7 @@ class EmotionGUI:
         self.start_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
 
         self.stop_btn = ctk.CTkButton(
-            btn_frame, text="STOP",
+            btn_frame, text=self._t("btn_stop"),
             font=(UI_FONT, 14, "bold"),
             fg_color=BTN_STOP, hover_color=BTN_STOP_HOVER,
             text_color="white", corner_radius=6, height=32, width=0,
@@ -1260,11 +1473,12 @@ class EmotionGUI:
 
         header = tk.Label(
             panel,
-            text="Particle Visualization Area",
+            text=self._t("viz_header"),
             font=(UI_FONT, 12, "italic"),
             bg="#0A0A0A", fg="#888888",
         )
         header.pack(pady=(6, 0))
+        self._tw["viz_header"] = header
         print("[GUI]     _build_visualization_panel: header label packed")
 
         viz_frame = tk.Frame(panel, bg="#0A0A0A")
@@ -1294,21 +1508,8 @@ class EmotionGUI:
         self._viz_emotion_visible = False
 
         # Placeholder text when TD is not connected
-        if _platform.system() == "Darwin":
-            _placeholder_text = (
-                "TouchDesigner'a UDP ile bağlanıldı\n"
-                "Texture paylaşımı için Syphon gereklidir\n"
-                "(pip install syphon-python)\n\n"
-                "UDP verisi gönderiliyor:\n"
-                f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}"
-            )
-        else:
-            _placeholder_text = (
-                "Connect TouchDesigner via Spout\n"
-                "or run TD alongside this application.\n\n"
-                "UDP data is being sent to\n"
-                f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}"
-            )
+        _ph_key = "placeholder_mac" if _platform.system() == "Darwin" else "placeholder_win"
+        _placeholder_text = self._t(_ph_key) + f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}"
         self.viz_placeholder = tk.Label(
             self.viz_canvas,
             text=_placeholder_text,
@@ -1317,15 +1518,17 @@ class EmotionGUI:
             justify=tk.CENTER,
         )
         self.viz_placeholder.place(relx=0.5, rely=0.7, anchor="center")
+        self._tw["viz_placeholder"] = self.viz_placeholder
         print("[GUI]     _build_visualization_panel: placeholder label placed")
 
         footer = tk.Label(
             panel,
-            text="Real-time adaptive particle rendering",
+            text=self._t("viz_footer"),
             font=(UI_FONT, 9, "italic"),
             bg="#0A0A0A", fg="#555555",
         )
         footer.pack(side=tk.BOTTOM, pady=(0, 6))
+        self._tw["viz_footer"] = footer
         print("[GUI]     _build_visualization_panel: footer packed — DONE")
 
     # ── RIGHT: Monitoring ────────────────────────────────────────
@@ -1340,13 +1543,14 @@ class EmotionGUI:
         panel.configure(width=260)
         print("[GUI]     _build_monitoring_panel: panel packed (side=RIGHT, width=260)")
 
-        self._section_label(panel, "Monitoring")
+        self._section_label(panel, "section_monitoring")
         print("[GUI]     _build_monitoring_panel: section label done")
 
         # Emotion Probabilities
         print("[GUI]     _build_monitoring_panel: Emotion Probabilities heading...")
-        self._heading(panel, "Emotion Probabilities")
+        self._heading(panel, "h_probs")
         self.prob_bars: Dict[str, Dict] = {}
+        self.prob_bar_name_labels: Dict[str, tk.Label] = {}
         # Display order: happy, neutral, surprise, sad, angry
         display_order = ["happy", "neutral", "surprise", "sad", "angry"]
         for emotion in display_order:
@@ -1355,11 +1559,12 @@ class EmotionGUI:
 
             color = EMOTION_HEX[emotion]
             label = tk.Label(
-                row, text=emotion.capitalize(),
+                row, text=self._emotion_label(emotion),
                 font=(UI_FONT, 10, "bold"),
-                fg=color, bg=PANEL_BG, width=8, anchor="e",
+                fg=color, bg=PANEL_BG, width=10, anchor="e",
             )
             label.pack(side=tk.LEFT)
+            self.prob_bar_name_labels[emotion] = label
 
             bar_container = tk.Frame(
                 row, bg=BAR_BG, height=16,
@@ -1390,7 +1595,7 @@ class EmotionGUI:
         self._separator(panel)
 
         # Dominant Emotion
-        self._heading(panel, "Dominant Emotion")
+        self._heading(panel, "h_dominant")
         dominant_frame = tk.Frame(panel, bg=PANEL_BG, height=40)
         dominant_frame.pack(padx=15, fill=tk.X, pady=(0, 4))
         dominant_frame.pack_propagate(False)
@@ -1413,7 +1618,7 @@ class EmotionGUI:
         self._separator(panel)
 
         # Performance
-        self._heading(panel, "Performance")
+        self._heading(panel, "h_perf")
         perf_frame = tk.Frame(panel, bg=PANEL_BG)
         perf_frame.pack(padx=15, fill=tk.X)
 
@@ -1425,14 +1630,14 @@ class EmotionGUI:
         self.fps_label.pack(fill=tk.X)
 
         self.latency_label = tk.Label(
-            perf_frame, text="Latency: -- ms",
+            perf_frame, text=self._t("latency_lbl") + " -- ms",
             font=(UI_FONT, 11), fg=TEXT_COLOR, bg=PANEL_BG,
             anchor="w",
         )
         self.latency_label.pack(fill=tk.X)
 
         self.udp_label = tk.Label(
-            perf_frame, text="UDP Recv: Idle",
+            perf_frame, text=self._t("udp_lbl") + " Bekleniyor",
             font=(UI_FONT, 11), fg=TEXT_COLOR, bg=PANEL_BG,
             anchor="w",
         )
@@ -1440,15 +1645,15 @@ class EmotionGUI:
 
         self.device_label = tk.Label(
             perf_frame,
-            text=f"Device: {self.device}",
+            text=f"{self._t('device_lbl')} {self.device}",
             font=(UI_FONT, 10), fg="#888888", bg=PANEL_BG,
             anchor="w",
         )
         self.device_label.pack(fill=tk.X, pady=(8, 0))
 
         # "? How to use" — bottom-right of monitoring panel
-        tk.Button(
-            panel, text="?  How to use",
+        self._tw["btn_how_to"] = tk.Button(
+            panel, text=self._t("btn_how_to"),
             font=(UI_FONT, 9), bg=PANEL_BG, fg="#666666",
             relief=tk.FLAT, cursor="hand2", bd=0,
             activebackground=PANEL_BG, activeforeground="#AAAAAA",
@@ -1457,26 +1662,142 @@ class EmotionGUI:
         print("[GUI]     _build_monitoring_panel: performance labels packed — DONE")
 
     # ── UI helpers ───────────────────────────────────────────────
-    def _section_label(self, parent: tk.Frame, text: str) -> None:
+    # ── Language helpers ─────────────────────────────────────────
+    def _t(self, key: str) -> str:
+        return UI_TEXT[self.lang].get(key, key)
+
+    def _emotion_label(self, emotion: str) -> str:
+        return EMOTION_LABELS[self.lang].get(emotion, emotion.capitalize())
+
+    def _show_lang_select(self) -> None:
+        win = tk.Toplevel(self.root)
+        win.title("")
+        win.resizable(False, False)
+        win.configure(bg="#1A1A2E")
+        win.grab_set()
+        win.focus_set()
+
+        w, h = 380, 240
+        scr_w = self.root.winfo_screenwidth()
+        scr_h = self.root.winfo_screenheight()
+        win.geometry(f"{w}x{h}+{(scr_w-w)//2}+{(scr_h-h)//2}")
+
         tk.Label(
-            parent, text=text,
+            win, text="Dil Seçin",
+            font=(UI_FONT, 18, "bold"), bg="#1A1A2E", fg="#FFFFFF",
+        ).pack(pady=(30, 4))
+        tk.Label(
+            win, text="Select Language",
+            font=(UI_FONT, 11), bg="#1A1A2E", fg="#AAAAAA",
+        ).pack(pady=(0, 24))
+
+        btn_frame = tk.Frame(win, bg="#1A1A2E")
+        btn_frame.pack()
+
+        def select(lang: str) -> None:
+            self.lang = lang
+            win.destroy()
+
+        ctk.CTkButton(
+            btn_frame, text="Türkçe", width=140, height=52,
+            font=(UI_FONT, 15, "bold"),
+            fg_color="#2A5C8A", hover_color="#3A7CBF",
+            command=lambda: select("TR"),
+        ).pack(side=tk.LEFT, padx=12)
+        ctk.CTkButton(
+            btn_frame, text="English", width=140, height=52,
+            font=(UI_FONT, 15, "bold"),
+            fg_color="#3A5A40", hover_color="#4A7A50",
+            command=lambda: select("EN"),
+        ).pack(side=tk.LEFT, padx=12)
+
+        win.wait_window()
+
+    def _toggle_lang(self) -> None:
+        self.lang = "EN" if self.lang == "TR" else "TR"
+        self._apply_lang()
+
+    def _apply_lang(self) -> None:
+        # Update simple registered widgets
+        for key, widget in self._tw.items():
+            if widget is None:
+                continue
+            text = UI_TEXT[self.lang].get(key)
+            if text is None:
+                continue
+            if key.startswith("h_"):
+                widget.configure(text=f"  {text}  ")
+            elif key == "viz_placeholder":
+                _ph_key = "placeholder_mac" if _platform.system() == "Darwin" else "placeholder_win"
+                widget.configure(text=self._t(_ph_key) + f"{DEFAULT_UDP_IP}:{DEFAULT_UDP_PORT}")
+            else:
+                widget.configure(text=text)
+        # CTk buttons (configure works for both tk and ctk)
+        for key, btn in [
+            ("btn_calibrate",  self.calibrate_btn),
+            ("btn_load_cal",   self.load_cal_btn),
+            ("btn_clear",      self.clear_cal_btn),
+            ("btn_img_cal",    self.img_cal_btn),
+            ("btn_load_img",   self.load_image_btn),
+            ("btn_start",      self.start_btn),
+            ("btn_stop",       self.stop_btn),
+        ]:
+            btn.configure(text=self._t(key))
+        # Emotion bar labels
+        for emotion, lbl in self.prob_bar_name_labels.items():
+            lbl.configure(text=self._emotion_label(emotion))
+        # Dynamic performance labels — reset to idle state
+        self.latency_label.configure(text=self._t("latency_lbl") + " -- ms")
+        self.udp_label.configure(text=self._t("udp_lbl") + " --")
+        self.device_label.configure(text=f"{self._t('device_lbl')} {self.device}")
+        # cal_status_label (only when inactive)
+        if self.cal_status_label.cget("text") in (
+            UI_TEXT["TR"]["cal_inactive"], UI_TEXT["EN"]["cal_inactive"]
+        ):
+            self.cal_status_label.configure(text=self._t("cal_inactive"))
+        # webcam_canvas (only when camera is off)
+        if self.webcam_canvas.cget("text") in (
+            UI_TEXT["TR"]["camera_off"], UI_TEXT["EN"]["camera_off"]
+        ):
+            self.webcam_canvas.configure(text=self._t("camera_off"))
+        # Dominant label — refresh text if emotion is active
+        if self.dominant_emotion:
+            color = EMOTION_HEX.get(self.dominant_emotion, "#FFFFFF")
+            self.dominant_label.configure(
+                text=f"{self._emotion_label(self.dominant_emotion)}  "
+                     f"({self.dominant_confidence:.1%})",
+                fg=color,
+            )
+            self.viz_emotion_label.configure(
+                text=self._emotion_label(self.dominant_emotion),
+            )
+
+    def _section_label(self, parent: tk.Frame, key: str) -> tk.Label:
+        lbl = tk.Label(
+            parent, text=self._t(key),
             font=(UI_FONT, 14, "bold"),
             bg=PANEL_BG, fg=HEADING_COLOR,
-        ).pack(pady=(10, 4))
+        )
+        lbl.pack(pady=(10, 4))
+        self._tw[key] = lbl
+        return lbl
 
-    def _heading(self, parent: tk.Frame, text: str) -> None:
+    def _heading(self, parent: tk.Frame, key: str) -> tk.Label:
         frame = tk.Frame(parent, bg=PANEL_BG)
         frame.pack(fill=tk.X, padx=15, pady=(8, 2))
         tk.Frame(frame, bg=BORDER_COLOR, height=1).pack(
             side=tk.LEFT, fill=tk.X, expand=True, pady=8,
         )
-        tk.Label(
-            frame, text=f"  {text}  ",
+        lbl = tk.Label(
+            frame, text=f"  {self._t(key)}  ",
             font=(UI_FONT, 10), bg=PANEL_BG, fg="#AAAAAA",
-        ).pack(side=tk.LEFT)
+        )
+        lbl.pack(side=tk.LEFT)
         tk.Frame(frame, bg=BORDER_COLOR, height=1).pack(
             side=tk.LEFT, fill=tk.X, expand=True, pady=8,
         )
+        self._tw[key] = lbl
+        return lbl
 
     def _separator(self, parent: tk.Frame) -> None:
         tk.Frame(
@@ -1622,9 +1943,9 @@ class EmotionGUI:
                 state="disabled" if loading else "readonly",
             )
         if hasattr(self, "device_label"):
-            suffix = "  (loading\u2026)" if loading else ""
+            suffix = "  " + self._t("loading_sfx") if loading else ""
             self.device_label.config(
-                text=f"Device: {self.device}{suffix}",
+                text=f"{self._t('device_lbl')} {self.device}{suffix}",
             )
 
     def _on_sensitivity_change(self, value=None) -> None:
@@ -1721,13 +2042,22 @@ class EmotionGUI:
         profile = self.calibration_mgr.get_active_profile()
         if profile is not None:
             self.cal_status_label.configure(
-                text=f"Active: {profile.user_name}",
+                text=f"{self._t('cal_active_pfx')}: {profile.user_name}",
                 fg="#4CAF50",
             )
         else:
             self.cal_status_label.configure(
-                text="Inactive", fg="#888888",
+                text=self._t("cal_inactive"), fg="#888888",
             )
+
+    def _open_image_calibration_wizard(self) -> None:
+        if self.model is None and not self.ensemble_mode:
+            messagebox.showwarning(
+                "Model Required",
+                "Please load a model before calibrating.",
+            )
+            return
+        ImageCalibrationWizard(self)
 
     def _open_calibration_wizard(self) -> None:
         if not self.running:
@@ -1907,6 +2237,16 @@ class EmotionGUI:
                         probs_dict,
                     )
 
+                # Landmark-based boost for angry/sad
+                if self.landmark_boost_enabled:
+                    if self._landmark_scorer is None:
+                        self._landmark_scorer = LandmarkScorer()
+                    face_rgb_arr = np.array(face_pil)
+                    lm_scores = self._landmark_scorer.score(face_rgb_arr)
+                    probs_dict = self._landmark_scorer.apply(
+                        probs_dict, lm_scores
+                    )
+
                 best_label = max(probs_dict, key=probs_dict.get)
                 best_conf = probs_dict[best_label]
                 best_idx = self.class_names.index(best_label)
@@ -1992,6 +2332,7 @@ class EmotionGUI:
         )
         self.webcam_canvas.configure(image=self._latest_frame, text="")
         self.webcam_canvas.image = self._latest_frame
+        self._update_occlusion_warn(len(faces) > 0, best_conf)
 
         # Update monitoring panel
         self.current_probs = probs_dict
@@ -2007,11 +2348,24 @@ class EmotionGUI:
         if self.dominant_emotion:
             color_hex = EMOTION_HEX.get(self.dominant_emotion, "#FFFFFF")
             self.dominant_label.configure(
-                text=f"{self.dominant_emotion.upper()} ({self.dominant_confidence:.1%})",
+                text=f"{self._emotion_label(self.dominant_emotion)}  ({self.dominant_confidence:.1%})",
                 fg=color_hex,
             )
         else:
             self.dominant_label.configure(text="---", fg="#888888")
+
+    # ── Occlusion warning badge ───────────────────────────────────
+    _OCCLUSION_CONF_THRESHOLD = 0.38  # below this → possible obstruction
+
+    def _update_occlusion_warn(self, faces_found: bool, best_conf: float) -> None:
+        """Show/hide the small occlusion warning badge on the webcam frame."""
+        show = faces_found and best_conf < self._OCCLUSION_CONF_THRESHOLD
+        if show and not self._occlusion_warn_visible:
+            self.occlusion_warn_lbl.place(relx=0.0, rely=1.0, anchor="sw", x=2, y=-2)
+            self._occlusion_warn_visible = True
+        elif not show and self._occlusion_warn_visible:
+            self.occlusion_warn_lbl.place_forget()
+            self._occlusion_warn_visible = False
 
     # ─────────────────────────────────────────────────────────────
     #  Start / Stop
@@ -2171,7 +2525,8 @@ class EmotionGUI:
         self.start_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
         self.udp_status = "Idle"
-        self.webcam_canvas.configure(image="", text="Camera Off")
+        self.webcam_canvas.configure(image="", text=self._t("camera_off"))
+        self._update_occlusion_warn(False, 1.0)   # hide warning when camera stops
         self._latest_spout_frame = None
         self._spout_connected = False
 
@@ -2190,7 +2545,7 @@ class EmotionGUI:
         self.dominant_tag_label.configure(text="")
         self.viz_emotion_label.configure(text="")
         self.fps_label.configure(text="FPS: --")
-        self.latency_label.configure(text="Latency: -- ms")
+        self.latency_label.configure(text=self._t("latency_lbl") + " -- ms")
         self.udp_label.configure(text="UDP Send: Idle")
 
     # ─────────────────────────────────────────────────────────────
@@ -2327,6 +2682,26 @@ class EmotionGUI:
                             probs_dict,
                         )
 
+                    # Temporal smoothing: average over rolling window
+                    self._prob_history.append(dict(probs_dict))
+                    if len(self._prob_history) > 1:
+                        smoothed: Dict[str, float] = {}
+                        for cls in probs_dict:
+                            smoothed[cls] = sum(
+                                h[cls] for h in self._prob_history
+                            ) / len(self._prob_history)
+                        probs_dict = smoothed
+
+                    # Landmark-based boost for angry/sad
+                    if self.landmark_boost_enabled:
+                        if self._landmark_scorer is None:
+                            self._landmark_scorer = LandmarkScorer()
+                        face_rgb_arr = np.array(face_pil)
+                        lm_scores = self._landmark_scorer.score(face_rgb_arr)
+                        probs_dict = self._landmark_scorer.apply(
+                            probs_dict, lm_scores
+                        )
+
                     best_label = max(probs_dict, key=probs_dict.get)
                     best_conf = probs_dict[best_label]
                     best_idx = self.class_names.index(best_label)
@@ -2435,6 +2810,9 @@ class EmotionGUI:
                         self._last_udp_send = now
 
             else:
+                # No face detected — clear smoothing history so stale
+                # probabilities don't bleed into the next detected face.
+                self._prob_history.clear()
                 now = time.time()
                 if now - self._last_udp_send >= SEND_INTERVAL:
                     self._send_udp_reset()
@@ -2451,9 +2829,11 @@ class EmotionGUI:
             self.dominant_emotion = best_label if best_conf >= self.sensitivity else ""
             self.dominant_confidence = best_conf if best_conf >= self.sensitivity else 0.0
 
-            # Convert frame for tkinter
+            # Prepare display frame as a PIL image.
+            # ImageTk.PhotoImage must be created in the main thread (Tcl/Tk
+            # is not thread-safe on macOS); _frame_to_pil is safe here.
             preview_w, preview_h = WEBCAM_PREVIEW_SIZE
-            self._latest_frame = self._cv2_to_tk(
+            self._latest_frame_pil = self._frame_to_pil(
                 display_frame, preview_w, preview_h
             )
 
@@ -2470,6 +2850,56 @@ class EmotionGUI:
             if remaining > 0:
                 time.sleep(remaining)
 
+    # ── PIL font cache (loaded once) ─────────────────────────────
+    _pil_font_cache: Dict[int, ImageFont.FreeTypeFont] = {}
+    _FONT_PATHS = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]
+
+    @classmethod
+    def _get_pil_font(cls, size: int) -> ImageFont.FreeTypeFont:
+        if size not in cls._pil_font_cache:
+            font = None
+            for path in cls._FONT_PATHS:
+                try:
+                    font = ImageFont.truetype(path, size)
+                    break
+                except (IOError, OSError):
+                    continue
+            cls._pil_font_cache[size] = font or ImageFont.load_default()
+        return cls._pil_font_cache[size]
+
+    def _draw_text_unicode(
+        self,
+        frame: np.ndarray,
+        text: str,
+        pos: Tuple[int, int],
+        color_bgr: Tuple[int, int, int],
+        font_size: int,
+    ) -> None:
+        """Render Unicode text (e.g. Turkish) on a BGR numpy frame via PIL."""
+        try:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(rgb)
+            draw = ImageDraw.Draw(pil_img)
+            font = self._get_pil_font(font_size)
+            color_rgb = (color_bgr[2], color_bgr[1], color_bgr[0])
+            # Shadow
+            draw.text((pos[0] + 2, pos[1] + 2), text, font=font, fill=(0, 0, 0))
+            # Coloured text
+            draw.text(pos, text, font=font, fill=color_rgb)
+            frame[:] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        except Exception:
+            # ASCII fallback so the capture thread never crashes
+            ascii_text = text.encode("ascii", errors="replace").decode("ascii")
+            scale = max(0.5, font_size / 24.0)
+            cv2.putText(frame, ascii_text, pos, cv2.FONT_HERSHEY_SIMPLEX,
+                        scale, color_bgr, max(1, int(scale * 2)), cv2.LINE_AA)
+
     def _draw_face_overlay(
         self,
         frame: np.ndarray,
@@ -2477,33 +2907,32 @@ class EmotionGUI:
         label: str, conf: float,
         preview_w: int = 240, preview_h: int = 180,
     ) -> None:
-        """Minimalist face overlay: thin rectangle + small floating label."""
-        fh, fw = frame.shape[:2]
-        sf = max(1.0, max(fw / preview_w, fh / preview_h))
-        color = EMOTION_BGR.get(label, (0, 255, 0))
+        """Face overlay: rectangle + bold floating label with shadow."""
+        try:
+            fh, fw = frame.shape[:2]
+            sf = max(1.0, max(fw / preview_w, fh / preview_h))
+            color = EMOTION_BGR.get(label, (0, 255, 0))
 
-        # Thin rectangle (1px in preview space)
-        cv2.rectangle(frame, (x, y), (x + w, y + h), color, max(1, int(sf)))
+            # Rectangle
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, max(2, int(sf * 1.5)))
 
-        # Small label above top-left corner
-        text = f"{label.upper()}  {conf:.0%}"
-        font_scale = max(0.32, 0.40 * sf)
-        thickness = max(1, int(sf))
-        (tw, th), _ = cv2.getTextSize(
-            text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
-        )
-        tx = x
-        ty = max(th + int(2 * sf), y - int(4 * sf))
-        cv2.putText(
-            frame, text, (tx, ty),
-            cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-            color, thickness, cv2.LINE_AA,
-        )
+            # Label text: full TR/EN Unicode (PIL handles ö ü ş ç ğ İ)
+            if self.lang == "TR":
+                emotion_tr = EMOTION_TR.get(label, label.capitalize())
+                text = f"{emotion_tr}  {conf:.0%}"
+            else:
+                text = f"{label.upper()}  {conf:.0%}"
 
-    def _cv2_to_tk(
-        self, frame: np.ndarray, w: int, h: int,
-    ) -> ImageTk.PhotoImage:
-        """Convert an OpenCV BGR frame to a tkinter PhotoImage."""
+            font_size = max(16, int(18 * sf))
+            ty = max(font_size + 4, y - int(6 * sf))
+            tx = x
+
+            self._draw_text_unicode(frame, text, (tx, ty - font_size), color, font_size)
+        except Exception as exc:
+            print(f"[draw_face_overlay] {exc}")
+
+    def _frame_to_pil(self, frame: np.ndarray, w: int, h: int) -> Image.Image:
+        """Convert an OpenCV BGR frame to a PIL Image (thread-safe, no Tk calls)."""
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb)
 
@@ -2519,7 +2948,13 @@ class EmotionGUI:
             (h - pil_img.size[1]) // 2,
         )
         canvas.paste(pil_img, offset)
-        return ImageTk.PhotoImage(canvas)
+        return canvas
+
+    def _cv2_to_tk(
+        self, frame: np.ndarray, w: int, h: int,
+    ) -> ImageTk.PhotoImage:
+        """Convert an OpenCV BGR frame to a tkinter PhotoImage (main thread only)."""
+        return ImageTk.PhotoImage(self._frame_to_pil(frame, w, h))
 
     def _spout_to_tk(self, frame: np.ndarray, w: int, h: int) -> ImageTk.PhotoImage:
         """Convert a Spout RGB frame to a tkinter PhotoImage."""
@@ -2533,12 +2968,17 @@ class EmotionGUI:
         if not self.running:
             return
 
-        # Update webcam preview
-        if hasattr(self, "_latest_frame"):
+        # Update webcam preview — ImageTk.PhotoImage created here (main thread)
+        if hasattr(self, "_latest_frame_pil") and self._latest_frame_pil is not None:
+            self._latest_frame = ImageTk.PhotoImage(self._latest_frame_pil)
             self.webcam_canvas.configure(
                 image=self._latest_frame, text="",
             )
             self.webcam_canvas.image = self._latest_frame
+            self._update_occlusion_warn(
+                bool(self.dominant_emotion or self.current_probs),
+                self.dominant_confidence if self.dominant_emotion else max(self.current_probs.values(), default=0.0),
+            )
 
         # Update probability bars
         for emotion, widgets in self.prob_bars.items():
@@ -2550,9 +2990,9 @@ class EmotionGUI:
         # Update dominant emotion
         if self.dominant_emotion:
             color = EMOTION_HEX.get(self.dominant_emotion, "#FFFFFF")
+            disp = self._emotion_label(self.dominant_emotion)
             self.dominant_label.configure(
-                text=f"{self.dominant_emotion.upper()} "
-                     f"({self.dominant_confidence:.1%})",
+                text=f"{disp}  ({self.dominant_confidence:.1%})",
                 fg=color,
             )
             # Show ensemble/calibration tags on separate line
@@ -2567,7 +3007,7 @@ class EmotionGUI:
             # Also update center panel overlay (only when Spout is not active)
             if not (self._spout_available and self._latest_spout_frame is not None):
                 self.viz_emotion_label.configure(
-                    text=self.dominant_emotion.upper(),
+                    text=self._emotion_label(self.dominant_emotion),
                     fg=color,
                 )
                 if not self._viz_emotion_visible:
@@ -2611,10 +3051,10 @@ class EmotionGUI:
             text=f"FPS: {self.current_fps:.0f} FPS",
         )
         self.latency_label.configure(
-            text=f"Latency: {self.current_latency_ms:.0f} ms",
+            text=f"{self._t('latency_lbl')} {self.current_latency_ms:.0f} ms",
         )
         self.udp_label.configure(
-            text=f"UDP Send: {self.udp_status}",
+            text=f"{self._t('udp_lbl')} {self.udp_status}",
         )
 
         # Match UI refresh to capture rate. Running the UI at 30 fps
@@ -2659,58 +3099,39 @@ class TutorialOverlay:
     Launch via: TutorialOverlay(gui_instance)
     """
 
-    STEPS = [
-        dict(
-            attr="model_menu",
-            side="below",
-            title="Step 1 — Select a Model",
-            body=(
-                "Pick a model from this dropdown.\n"
-                "ResNet-18 is recommended for first-time use.\n"
-                "It loads automatically on selection."
-            ),
-        ),
-        dict(
-            attr="start_btn",
-            side="above",
-            title="Step 2 — Start the Webcam",
-            body=(
-                "Click the green START button.\n"
-                "The built-in camera opens and a live\n"
-                "preview appears in the panel above."
-            ),
-        ),
-        dict(
-            attr="webcam_canvas",
-            side="right",
-            title="Step 3 — Live Preview",
-            body=(
-                "Your face appears here once the\n"
-                "webcam is running.\n"
-                "Aim for ~50 cm distance, good lighting."
-            ),
-        ),
-        dict(
-            attr="dominant_label",
-            side="left",
-            title="Step 4 — Emotion Output",
-            body=(
-                "The detected emotion and confidence\n"
-                "score appear here in real time.\n"
-                "The bar chart above shows all emotions."
-            ),
-        ),
-        dict(
-            attr="load_image_btn",
-            side="above",
-            title="Step 5 — Test with an Image",
-            body=(
-                "Tick 'Use test image' then click Load\n"
-                "to pick a photo from disk.\n"
-                "Press START — the model runs on the image\n"
-                "instead of the live webcam."
-            ),
-        ),
+    STEPS_TR = [
+        dict(attr="model_menu",    side="below",
+             title="Adım 1 — Model Seçin",
+             body="Bu açılır menüden model seçin.\nİlk kullanım için ResNet-18 önerilir.\nSeçimde otomatik olarak yüklenir."),
+        dict(attr="start_btn",     side="above",
+             title="Adım 2 — Kamerayı Başlatın",
+             body="Yeşil BAŞLAT düğmesine tıklayın.\nDahili kamera açılır ve canlı\nönizleme yukarıdaki panelde görünür."),
+        dict(attr="webcam_canvas", side="right",
+             title="Adım 3 — Canlı Önizleme",
+             body="Kamera çalışınca yüzünüz burada görünür.\n~50 cm mesafe ve iyi aydınlatma\nen iyi sonucu verir."),
+        dict(attr="dominant_label", side="left",
+             title="Adım 4 — Duygu Çıktısı",
+             body="Algılanan duygu ve güven skoru\nburada gerçek zamanlı görünür.\nYukarıdaki çubuk grafik tüm duyguları gösterir."),
+        dict(attr="load_image_btn", side="above",
+             title="Adım 5 — Görüntüyle Test",
+             body="'Test görüntüsü kullan'ı işaretleyin\nsonra Yükle'ye tıklayarak fotoğraf seçin.\nBAŞLAT — model kamera yerine görüntü üzerinde çalışır."),
+    ]
+    STEPS_EN = [
+        dict(attr="model_menu",    side="below",
+             title="Step 1 — Select a Model",
+             body="Pick a model from this dropdown.\nResNet-18 is recommended for first-time use.\nIt loads automatically on selection."),
+        dict(attr="start_btn",     side="above",
+             title="Step 2 — Start the Webcam",
+             body="Click the green START button.\nThe built-in camera opens and a live\npreview appears in the panel above."),
+        dict(attr="webcam_canvas", side="right",
+             title="Step 3 — Live Preview",
+             body="Your face appears here once the\nwebcam is running.\nAim for ~50 cm distance, good lighting."),
+        dict(attr="dominant_label", side="left",
+             title="Step 4 — Emotion Output",
+             body="The detected emotion and confidence\nscore appear here in real time.\nThe bar chart above shows all emotions."),
+        dict(attr="load_image_btn", side="above",
+             title="Step 5 — Test with an Image",
+             body="Tick 'Use test image' then click Load\nto pick a photo from disk.\nPress START — the model runs on the image\ninstead of the live webcam."),
     ]
 
     _CW  = 268   # callout width
@@ -2720,6 +3141,7 @@ class TutorialOverlay:
     def __init__(self, gui: "EmotionGUI") -> None:
         self._gui = gui
         self._step = 0
+        self.STEPS = self.STEPS_TR if gui.lang == "TR" else self.STEPS_EN
         self._overlay: Optional[tk.Toplevel] = None
         self._callout: Optional[tk.Toplevel] = None
         self._ov_canvas: Optional[tk.Canvas] = None
@@ -2855,9 +3277,11 @@ class TutorialOverlay:
             font=(UI_FONT, 9), fill="#555555", anchor="center",
         )
 
+        is_tr = self._gui.lang == "TR"
+
         # Skip button
         ctk.CTkButton(
-            win, text="Skip",
+            win, text="Geç" if is_tr else "Skip",
             font=(UI_FONT, 10),
             fg_color="#262626", hover_color="#363636",
             text_color="#777777", corner_radius=4, height=22, width=48,
@@ -2867,7 +3291,7 @@ class TutorialOverlay:
         # Back button (not on first step)
         if self._step > 0:
             ctk.CTkButton(
-                win, text="← Back",
+                win, text="← Geri" if is_tr else "← Back",
                 font=(UI_FONT, 10),
                 fg_color="#262626", hover_color="#363636",
                 text_color="#AAAAAA", corner_radius=4, height=22, width=62,
@@ -2877,7 +3301,7 @@ class TutorialOverlay:
         # Next / Finish button
         ctk.CTkButton(
             win,
-            text="Finish ✓" if is_last else "Next →",
+            text=("Bitti ✓" if is_last else "İleri →") if is_tr else ("Finish ✓" if is_last else "Next →"),
             font=(UI_FONT, 10, "bold"),
             fg_color=BTN_START if is_last else "#1A3A70",
             hover_color=BTN_START_HOVER if is_last else "#2A4A90",
@@ -2897,6 +3321,270 @@ class TutorialOverlay:
         for w in (self._callout, self._overlay):
             if w and w.winfo_exists():
                 w.destroy()
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Image-Based Calibration Wizard
+# ═════════════════════════════════════════════════════════════════
+class ImageCalibrationWizard(tk.Toplevel):
+    """Dialog to build a calibration profile from one image per emotion."""
+
+    def __init__(self, parent: "EmotionGUI") -> None:
+        super().__init__(parent.root)
+        self.parent = parent
+        self.title("Calibrate from Images")
+        self.configure(bg=BG_COLOR)
+        self.geometry("560x480")
+        self.resizable(False, False)
+        self.transient(parent.root)
+        self.grab_set()
+
+        # {emotion: path_str}
+        self._image_paths: Dict[str, str] = {}
+        # {emotion: probs_dict}
+        self._baselines: Dict[str, Dict[str, float]] = {}
+        self._row_status: Dict[str, tk.Label] = {}
+        self._row_path:   Dict[str, tk.Label] = {}
+
+        self._build_ui()
+
+    # ── UI ───────────────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        tk.Label(
+            self, text="Calibrate from Images",
+            font=(UI_FONT, 16, "bold"),
+            bg=BG_COLOR, fg=HEADING_COLOR,
+        ).pack(pady=(18, 2))
+        tk.Label(
+            self,
+            text="Select one reference photo per emotion. The model runs\n"
+                 "inference on each image to learn your personal expression style.",
+            font=(UI_FONT, 9), bg=BG_COLOR, fg="#888888",
+            justify=tk.CENTER,
+        ).pack()
+
+        # Name row
+        name_frame = tk.Frame(self, bg=BG_COLOR)
+        name_frame.pack(pady=(12, 0))
+        tk.Label(
+            name_frame, text="Name:",
+            font=(UI_FONT, 10), bg=BG_COLOR, fg=TEXT_COLOR,
+        ).pack(side=tk.LEFT)
+        self.name_var = tk.StringVar(value="user")
+        ctk.CTkEntry(
+            name_frame, textvariable=self.name_var,
+            font=(UI_FONT, 11), width=160,
+            fg_color=ACCENT, text_color=TEXT_COLOR,
+            border_color="#555555", border_width=1,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        tk.Frame(self, bg="#3A3A3A", height=1).pack(
+            fill=tk.X, padx=28, pady=(12, 6)
+        )
+
+        # One row per emotion
+        grid = tk.Frame(self, bg=BG_COLOR)
+        grid.pack(padx=28, fill=tk.X)
+
+        for emotion in EMOTION_CLASSES:
+            row = tk.Frame(grid, bg=BG_COLOR)
+            row.pack(fill=tk.X, pady=3)
+
+            color = EMOTION_HEX.get(emotion, "#AAAAAA")
+            tk.Label(
+                row, text=emotion.capitalize(),
+                font=(UI_FONT, 10, "bold"),
+                bg=BG_COLOR, fg=color, width=8, anchor="w",
+            ).pack(side=tk.LEFT)
+
+            path_lbl = tk.Label(
+                row, text="No image selected",
+                font=(UI_FONT, 9), bg=BG_COLOR, fg="#666666",
+                width=28, anchor="w",
+            )
+            path_lbl.pack(side=tk.LEFT, padx=(4, 6))
+            self._row_path[emotion] = path_lbl
+
+            status_lbl = tk.Label(
+                row, text="–",
+                font=(UI_FONT, 10, "bold"),
+                bg=BG_COLOR, fg="#555555", width=3,
+            )
+            status_lbl.pack(side=tk.RIGHT)
+            self._row_status[emotion] = status_lbl
+
+            ctk.CTkButton(
+                row, text="Select",
+                font=(UI_FONT, 10),
+                fg_color=BTN_SECONDARY, hover_color=BTN_SECONDARY_HOVER,
+                text_color="white", corner_radius=5, height=24, width=70,
+                command=lambda e=emotion: self._pick_image(e),
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
+        tk.Frame(self, bg="#3A3A3A", height=1).pack(
+            fill=tk.X, padx=28, pady=(10, 8)
+        )
+
+        self.status_lbl = tk.Label(
+            self, text="",
+            font=(UI_FONT, 9, "italic"),
+            bg=BG_COLOR, fg="#888888",
+        )
+        self.status_lbl.pack()
+
+        btn_frame = tk.Frame(self, bg=BG_COLOR)
+        btn_frame.pack(pady=(6, 16))
+
+        self.build_btn = ctk.CTkButton(
+            btn_frame, text="Build & Save Profile",
+            font=(UI_FONT, 12, "bold"),
+            fg_color=BTN_START, hover_color=BTN_START_HOVER,
+            text_color="white", width=180, state="disabled",
+            command=self._build_profile,
+        )
+        self.build_btn.pack(side=tk.LEFT, padx=8)
+
+        ctk.CTkButton(
+            btn_frame, text="Cancel",
+            font=(UI_FONT, 11),
+            fg_color="#3A3A3A", hover_color="#4A4A4A",
+            text_color="#AAAAAA", width=110,
+            command=self.destroy,
+        ).pack(side=tk.LEFT, padx=8)
+
+    # ── Logic ────────────────────────────────────────────────────
+
+    def _pick_image(self, emotion: str) -> None:
+        path = filedialog.askopenfilename(
+            title=f"Select image for: {emotion}",
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.bmp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        self._image_paths[emotion] = path
+        short = Path(path).name
+        if len(short) > 30:
+            short = short[:28] + "…"
+        self._row_path[emotion].configure(text=short, fg=TEXT_COLOR)
+        self._row_status[emotion].configure(text="…", fg="#FFD700")
+        self.status_lbl.configure(text=f"Running inference on {emotion}…")
+        self.update()
+
+        probs = self._infer_image(path)
+        if probs is None:
+            self._row_status[emotion].configure(text="✗", fg="#FF5555")
+            self.status_lbl.configure(
+                text=f"No face detected in {emotion} image. Try another photo.",
+                fg="#FF5555",
+            )
+            self._baselines.pop(emotion, None)
+        else:
+            self._baselines[emotion] = probs
+            top = max(probs, key=probs.get)
+            conf = probs[top]
+            self._row_status[emotion].configure(text="✓", fg="#4CAF50")
+            self.status_lbl.configure(
+                text=f"{emotion}: detected as '{top}' ({conf:.0%})",
+                fg="#888888",
+            )
+
+        # Enable build button when all emotions have valid baselines
+        if all(e in self._baselines for e in EMOTION_CLASSES):
+            self.build_btn.configure(state="normal")
+
+    def _infer_image(self, path: str) -> Optional[Dict[str, float]]:
+        """Load image, detect face, run model inference, return probs dict."""
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+            bgr = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        except Exception:
+            return None
+        if bgr is None:
+            return None
+
+        # Ensure face detector exists
+        if self.parent.face_detector is None:
+            cascade_path = (
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            self.parent.face_detector = cv2.CascadeClassifier(cascade_path)
+
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        faces = self.parent.face_detector.detectMultiScale(
+            gray,
+            scaleFactor=SCALE_FACTOR,
+            minNeighbors=MIN_NEIGHBORS,
+            minSize=MIN_FACE_SIZE,
+        )
+
+        # Fall back to whole image if no face detected
+        if len(faces) == 0:
+            face_crop = bgr
+        else:
+            areas = [w * h for (_, _, w, h) in faces]
+            x, y, w, h = faces[int(np.argmax(areas))]
+            fh, fw = bgr.shape[:2]
+            pad_w = int(w * FACE_PADDING_RATIO)
+            pad_h = int(h * FACE_PADDING_RATIO)
+            x1, y1 = max(0, x - pad_w), max(0, y - pad_h)
+            x2, y2 = min(fw, x + w + pad_w), min(fh, y + h + pad_h)
+            face_crop = bgr[y1:y2, x1:x2]
+            if face_crop.shape[0] < 10 or face_crop.shape[1] < 10:
+                face_crop = bgr
+
+        face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+        face_pil = Image.fromarray(face_rgb)
+
+        try:
+            if self.parent.ensemble_mode and self.parent.ensemble_mgr is not None:
+                probs_dict, _, _ = self.parent.ensemble_mgr.predict(
+                    face_pil, self.parent.ensemble_strategy_var.get()
+                )
+            else:
+                if self.parent.transform is None:
+                    return None
+                tensor = self.parent.transform(face_pil).unsqueeze(0).to(
+                    self.parent.device
+                )
+                with torch.no_grad():
+                    output = self.parent.model(tensor)
+                    prob_tensor = torch.softmax(output, dim=1)[0]
+                probs_dict = {
+                    cls: float(prob_tensor[i])
+                    for i, cls in enumerate(self.parent.class_names)
+                }
+        except Exception as exc:
+            print(f"[ImageCal] Inference error: {exc}")
+            return None
+
+        return probs_dict
+
+    def _build_profile(self) -> None:
+        user_name = self.name_var.get().strip() or "user"
+        model_name = (
+            self.parent.model_var.get()
+            if not self.parent.ensemble_mode
+            else "ensemble"
+        )
+        try:
+            profile = self.parent.calibration_mgr.create_profile_from_baselines(
+                user_name, model_name, self._baselines
+            )
+            saved_path = self.parent.calibration_mgr.save_profile(profile)
+            self.parent.calibration_mgr.set_active_profile(profile)
+            self.parent._update_calibration_status()
+            print(f"[INFO] Image calibration profile saved: {saved_path}")
+            messagebox.showinfo(
+                "Profile Saved",
+                f"Calibration profile saved and activated.\n\n{saved_path.name}",
+            )
+            self.destroy()
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc))
 
 
 # ═════════════════════════════════════════════════════════════════

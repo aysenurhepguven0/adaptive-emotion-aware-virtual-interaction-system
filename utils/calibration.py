@@ -173,6 +173,50 @@ class CalibrationManager:
         self._session_baselines = {}
         self._session_emotion_index = 0
 
+    def create_profile_from_baselines(
+        self,
+        user_name: str,
+        model_name: str,
+        baselines: Dict[str, Dict[str, float]],
+    ) -> CalibrationProfile:
+        """Build a CalibrationProfile directly from per-emotion probability dicts.
+
+        baselines: {emotion: {emotion_class: probability, ...}}
+        One dict per emotion — typically from a single reference image.
+        """
+        for e in self._emotion_classes:
+            if e not in baselines:
+                raise ValueError(f"Missing baseline for emotion: {e}")
+
+        C = np.zeros((self._n, self._n), dtype=np.float64)
+        for i, true_emotion in enumerate(self._emotion_classes):
+            baseline = baselines[true_emotion]
+            for j, pred_emotion in enumerate(self._emotion_classes):
+                C[i, j] = baseline.get(pred_emotion, 0.0)
+
+        cond = np.linalg.cond(C)
+        print(f"[CALIBRATION] Image-based confusion matrix condition: {cond:.2f}")
+        if cond < CONDITION_NUMBER_THRESHOLD:
+            correction = np.linalg.pinv(C)
+            method = "pinv"
+        else:
+            diag = np.diag(C).copy()
+            diag[diag < 1e-6] = 1e-6
+            correction = np.diag(1.0 / diag)
+            method = "diagonal"
+
+        return CalibrationProfile(
+            user_name=user_name,
+            model_name=model_name,
+            created_at=datetime.now().isoformat(timespec="seconds"),
+            emotion_classes=self._emotion_classes,
+            frames_per_emotion=1,
+            baseline_distributions=dict(baselines),
+            confusion_matrix=C.tolist(),
+            correction_matrix=correction.tolist(),
+            correction_method=method,
+        )
+
     # ── Correction ───────────────────────────────────────────────
 
     def apply_correction(self, probs: Dict[str, float]) -> Dict[str, float]:
