@@ -56,7 +56,8 @@ adaptive-emotion-aware-virtual-interaction-system/
     ├── train_efficientnet_B0.ipynb
     ├── train_resnet.ipynb
     ├── train_hsemotion.ipynb
-    └── compare_models.ipynb    # Side-by-side model comparison
+    ├── compare_models.ipynb         # Side-by-side model comparison
+    └── cross_validate_rafdb.ipynb   # k-fold cross-validation on RAF-DB
 ```
 
 ## Installation
@@ -196,4 +197,7 @@ The project uses the **FERPlus** dataset with the following emotion
 classes: angry, happy, neutral, sad, surprise.
 
 The dataset is expected under `data/ferplus/` with subdirectories
-for each emotion class.
+for each emotion class. Download it from
+[Kaggle](https://www.kaggle.com/datasets/arnabkumarroy02/ferplus)
+and extract it there. Colab notebooks download it automatically via
+`kagglehub`.
