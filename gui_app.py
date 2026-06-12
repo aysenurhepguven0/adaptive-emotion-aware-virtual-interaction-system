@@ -1,8 +1,7 @@
 """
 gui_app.py - Adaptive Emotion-Aware Virtual Interaction System GUI
 ===================================================================
-Three-panel interface matching the DESIGN.png mockup:
-
+Three-panel interface:
   Left:   Control Panel  (model selection, UDP config, sensitivity,
           webcam preview with Grad-CAM, START / STOP)
   Center: TouchDesigner visualization area (Spout receiver or
